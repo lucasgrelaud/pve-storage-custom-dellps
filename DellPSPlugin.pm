@@ -202,7 +202,7 @@ sub multipath_disable {
 
 # API version
 sub api {
-    return 1;
+    return 10;
 }
 
 sub type {
@@ -275,12 +275,14 @@ sub filesystem_path {
     return wantarray ? ($path, $vmid, $vtype) : $path;
 }
 
+# NOTE: create_base def has been reviewed
 sub create_base {
     my ($class, $storeid, $scfg, $volname) = @_;
 
     die "Creating base image is currently unimplemented";
 }
 
+# NOTE: clone_image def has been reviewed
 sub clone_image {
     my ($class, $scfg, $storeid, $volname, $vmid, $snap) = @_;
 
@@ -289,29 +291,44 @@ sub clone_image {
 
 # Seems like this method gets size in kilobytes somehow,
 # while listing methost return bytes. That's strange.
+# NOTE: clone_image def has been reviewed
+# TODO: Check consistency with the list method
 sub alloc_image {
     my ($class, $storeid, $scfg, $vmid, $fmt, $name, $size) = @_;
 
-    my $luns = dell_list_luns($scfg, undef, $vmid);
-    my $vols;
-    for my $lun (@$luns) {
-	$vols->{$lun->{'volid'}} = 1;
-    }
+    my $volname = $name;
+    
 
-    unless ($name) {
-	for (my $i = 1; $i < 100; $i++) {
-	    if (!$vols->{"vm-$vmid-disk-$i"}) {
-		$name = "vm-$vmid-disk-$i";
-		last;
-	    }
-	}
-    }
+    if ($fmt eq 'raw') {
+        # Validate volname
+        die "illegal name '$volname' - should be 'vm-$vmid-*'\n"
+	    if $volname && $volname !~ m/^vm-$vmid-/;
 
-    my $cache;
-    # Convert to megabytes and grow on one megabyte boundary if needed
-    dell_create_lun($scfg, $cache, $name, ceil($size/1024) . 'MB');
-    dell_configure_lun($scfg, $cache, $name);
-    return $name;
+        # List volumes (lun) from the EqualLogic
+        my $luns = dell_list_luns($scfg, undef, $vmid);
+        my $vols;
+        for my $lun (@$luns) { # Fill a list with volume name
+        $vols->{$lun->{'volid'}} = 1;
+        }
+
+        # If volname not set, find one
+        unless ($volname) {
+            for (my $i = 1; $i < 100; $i++) {
+                if (!$vols->{"vm-$vmid-disk-$i"}) {
+                    $volname = "vm-$vmid-disk-$i";
+                    last;
+                }
+            }
+        }
+
+        my $cache; # Dell connection cache
+        # Convert to megabytes and grow on one megabyte boundary if needed
+        dell_create_lun($scfg, $cache, $volname, ceil($size/1024) . 'MB');
+        dell_configure_lun($scfg, $cache, $volname);
+    } else {
+        die "unsupported format '$fmt'";
+    }
+    return $volname;
 }
 
 sub free_image {
@@ -325,6 +342,7 @@ sub free_image {
     };
 }
 
+# TODO: Check whether the listing method return a size in bytes or kilobytes
 sub list_images {
     my ($class, $storeid, $scfg, $vmid, $vollist, $cache) = @_;
 
