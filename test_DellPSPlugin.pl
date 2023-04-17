@@ -5,7 +5,7 @@ use PVE::CLIHandler;
 
 load './DellPSPlugin.pm';
 
-print "Test script for DellPSPlugin";
+print "Test script for DellPSPlugin\n";
 
 PVE::CLIHandler::setup_environment();
-print "CLI initialized";
+print "CLI initialized\n";

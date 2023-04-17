@@ -252,6 +252,7 @@ sub options {
 
 # Storage implementation
 
+# NOTE: parse_volname def has been reviewed
 sub parse_volname {
     my ($class, $volname) = @_;
 
@@ -262,6 +263,7 @@ sub parse_volname {
     }
 }
 
+# NOTE: filesystem_path def has been reviewed
 sub filesystem_path {
     my ($class, $scfg, $volname, $snapname) = @_;
 
@@ -302,7 +304,7 @@ sub alloc_image {
     if ($fmt eq 'raw') {
         # Validate volname
         die "illegal name '$volname' - should be 'vm-$vmid-*'\n"
-	    if $volname && $volname !~ m/^vm-$vmid-/;
+	    if $volname && $volname !~ m/^vm-$vmid-disk-/;
 
         # List volumes (lun) from the EqualLogic
         my $luns = dell_list_luns($scfg, undef, $vmid);
@@ -331,17 +333,19 @@ sub alloc_image {
     return $volname;
 }
 
+# NOTE: free_image def has been reviewed
 sub free_image {
     my ($class, $storeid, $scfg, $volname, $isBase) = @_;
 
     # Will free it in background
     return sub {
-        my $cache;
+        my $cache; # Dell connection cache
         $class->multipath_disable($scfg, $cache, $volname);
         dell_delete_lun($scfg, $cache, $volname);
     };
 }
 
+# NOTE: list_images def has been reviewed
 # TODO: Check whether the listing method return a size in bytes or kilobytes
 sub list_images {
     my ($class, $storeid, $scfg, $vmid, $vollist, $cache) = @_;
@@ -355,12 +359,14 @@ sub list_images {
     return $res;
 }
 
+# NOTE: status def has been reviewed
 sub status {
     my ($class, $storeid, $scfg, $cache) = @_;
 
     return @{dell_status($scfg, $cache)};
 }
 
+# NOTE: activate_storage def has been reviewed
 sub activate_storage {
     my ($class, $storeid, $scfg, $cache) = @_;
 
@@ -368,12 +374,15 @@ sub activate_storage {
     return 1;
 }
 
+# NOTE: activate_storage def has been reviewed
 sub deactivate_storage {
     my ($class, $storeid, $scfg, $cache) = @_;
 
+    # Server's SCSI subsystem is always up, so there's nothing to do
     return 1;
 }
 
+# NOTE: activate_volume def has been reviewed
 sub activate_volume {
     my ($class, $storeid, $scfg, $volname, $snapname, $cache) = @_;
 
@@ -386,6 +395,7 @@ sub activate_volume {
     return 1;
 }
 
+# NOTE: deactivate_volume def has been reviewed
 sub deactivate_volume {
     my ($class, $storeid, $scfg, $volname, $snapname, $cache) = @_;
 
@@ -397,6 +407,7 @@ sub deactivate_volume {
     return 1;
 }
 
+# NOTE: volume_resize def has been reviewed
 sub volume_resize {
     my ($class, $scfg, $storeid, $volname, $size, $running) = @_;
     my $cache;
@@ -406,17 +417,19 @@ sub volume_resize {
     # rescan target for changes
     run_command(['/usr/bin/iscsiadm', '-m', 'node', '--portal', $scfg->{'groupaddr'} .':3260', '--target', $target, '-R']);
 
-    return 1;
+    return undef;
 }
 
+# NOTE: volume_snapshot def has been reviewed
 sub volume_snapshot {
     my ($class, $scfg, $storeid, $volname, $snap) = @_;
     my $cache;
 
     dell_create_snapshot($scfg, $cache, $volname, $snap);
-    return 1;
+    return undef;
 }
 
+# NOTE: volume_snapshot_rollback def has been reviewed
 sub volume_snapshot_rollback {
     my ($class, $scfg, $storeid, $volname, $snap) = @_;
     my $cache;
@@ -428,19 +441,21 @@ sub volume_snapshot_rollback {
     # rescan target for changes
     run_command(['/usr/bin/iscsiadm', '-m', 'node', '--portal', $scfg->{'groupaddr'} .':3260', '--target', $target, '-R']);
 
-    return 1;
+    return undef;
 }
 
+# NOTE: volume_snapshot_delete def has been reviewed
 sub volume_snapshot_delete {
-    my ($class, $scfg, $storeid, $volname, $snap) = @_;
+    my ($class, $scfg, $storeid, $volname, $snap, $running) = @_;
     my $cache;
 
     dell_delete_snapshot($scfg, $cache, $volname, $snap);
-    return 1;
+    return undef;
 }
 
+# NOTE: volume_has_feature def has been reviewed
 sub volume_has_feature {
-    my ($class, $scfg, $feature, $storeid, $volname, $snapname, $running) = @_;
+    my ($class, $scfg, $feature, $storeid, $volname, $snapname, $running, , $opts) = @_;
 
     my $features = {
 	snapshot => { current => 1, snap => 1 },
