@@ -10,6 +10,7 @@ use PVE::Storage::Plugin;
 use PVE::JSONSchema qw(get_standard_option);
 use PVE::Cluster qw(cfs_read_file cfs_write_file cfs_lock_file);
 use Net::Telnet;
+use Data::Dumper;
 
 use base qw(PVE::Storage::Plugin);
 
@@ -94,7 +95,6 @@ sub dell_configure_lun {
 
     $cache->{telnet} = dell_connect($scfg) unless $cache->{telnet};
     my $tn = $cache->{telnet};
-
     if ((!defined($scfg->{allowedaddr}) || $scfg->{allowedaddr} eq '') &&  (!defined($scfg->{chaplogin}) || $scfg->{chaplogin} eq '')) {
         # No allowedaddr nor chaplogin => unrestricted-access.
         $tn->cmd(sprintf("volume select %s access create ipaddress *.*.*.* authmethod none", $name));
@@ -107,23 +107,36 @@ sub dell_configure_lun {
             $usernamestr = "username " . $scfg->{chaplogin} . " authmethod chap ";
         };
         
-        my@allowedaddr = split(' ', $scfg->{allowedaddr});
+        my @allowedaddr = split(' ', $scfg->{allowedaddr});
         foreach my $addr ( @allowedaddr ) {
             $tn->cmd(sprintf("volume select %s access create ipaddress %s %s", $name, $addr, $usernamestr));
         };
     };
 
     # PVE itself manages access to LUNs, so that's OK.
-    $tn->cmd("volume select $name multihost-access enable");
+    $tn->cmd(sprintf("volume select %s multihost-access enable", $name));
 }
 
 sub dell_delete_lun {
     my ($scfg, $cache, $name) = @_;
     $cache->{telnet} = dell_connect($scfg) unless $cache->{telnet};
     my $tn = $cache->{telnet};
+    
+    # Snapshot must be offline in order to be deleted
+    my @lines = $tn->cmd(sprintf("volume select %s offline", $name));
+    if ($#lines > 1) {
+        die 'Cannot set volume offline!';
+        return 0;
+    } else {
+        # Delete the volume
+        @lines = $tn->cmd(sprintf("volume delete %s", $name));
+        if ($#lines > 1) {
+            die 'Cannot set lun offline';
+            return 0;
+        };
+    };
 
-    $tn->cmd("volume select $name offline");
-    $tn->cmd("volume delete $name");
+    return 1;
 }
 
 sub dell_resize_lun {
@@ -131,7 +144,7 @@ sub dell_resize_lun {
     $cache->{telnet} = dell_connect($scfg) unless $cache->{telnet};
     my $tn = $cache->{telnet};
 
-    $tn->cmd("volume select $name size no-snap $size");
+    $tn->cmd(sprintf("volume select %s size %s no-snap", $name, $size));
 }
 
 sub dell_create_snapshot {
@@ -139,7 +152,24 @@ sub dell_create_snapshot {
     $cache->{telnet} = dell_connect($scfg) unless $cache->{telnet};
     my $tn = $cache->{telnet};
 
-    $tn->cmd("volume select $name snapshot create-now $snapname");
+    # Create a snapshot
+    my @lines = $tn->cmd(sprintf("volume select %s snapshot create-now description %s", $name, $snapname));
+
+    #print Dumper(@lines);
+    if (!($lines[0] =~ m/succeeded/)) {
+        die 'Cannot create snapshot for volume!';
+        return 0;
+    } else {
+        # Rename the created snapshot to a predefined name
+        my @lineparts = split(' ', $lines[1]);
+        @lines = $tn->cmd(sprintf("volume select %s snapshot rename '%s' '%s'", $name, $lineparts[3], $snapname));
+        if ($#lines > 1) {
+            die 'Cannot create snapshot for volume!';
+            return 0;
+        };
+    };
+
+    return 1;
 }
 
 sub dell_delete_snapshot {
@@ -147,7 +177,22 @@ sub dell_delete_snapshot {
     $cache->{telnet} = dell_connect($scfg) unless $cache->{telnet};
     my $tn = $cache->{telnet};
 
-    $tn->cmd("volume select $name snapshot delete $snapname");
+    # Snapshot must be offline in order to be deleted
+    my @lines = $tn->cmd(sprintf("volume select %s snapshot select '%s' offline", $name, $snapname));
+    if ($#lines > 1) {
+        die 'Cannot set snapshot offline for volume!';
+        return 0;
+    } else {
+        # Delete the snapshot
+        @lines = $tn->cmd(sprintf("volume select %s snapshot delete '%s'", $name, $snapname));
+        if ($#lines > 1) {
+            die 'Cannot set snapshot offline for volume!';
+            return 0;
+        };
+    };
+
+    return 1;
+    
 }
 
 sub dell_rollback_snapshot {
@@ -155,7 +200,40 @@ sub dell_rollback_snapshot {
     $cache->{telnet} = dell_connect($scfg) unless $cache->{telnet};
     my $tn = $cache->{telnet};
 
-    $tn->cmd("volume select $name snapshot select $snapname restore");
+    # Volume and snapshot must be offline to perform a rollback
+    $tn->cmd(sprintf("volume select %s offline", $name));
+
+    # Perform the rollback
+    my @lines = $tn->cmd(sprintf("volume select %s snapshot select %s restore", $name, $snapname));
+    if ($#lines > 1) {
+            die 'Cannot rollback snapshot for volume!';
+            die 'Volume kept offline,  reactivate manually!';
+            return 0;
+    }
+    
+    sleep 5;
+
+    # Remove geneated snapshot post rollback
+    my $snaptoremove = '';
+    my @partial;
+    @lines = $tn->cmd(sprintf("volume select %s snapshot show", $name));
+    for my $line (@lines) {
+        # The snapshot name is lis
+        if ($line =~ /^(vm-(\d+)-disk-\d+)/){
+            @partial = split(' ', $line);
+            $snaptoremove = $partial[0];
+        } elsif ($snaptoremove ne '' && $line =~ /^^\s{2}(\d\d)?:(\d\d:)/) {
+            @partial = split(' ', $line);
+            $snaptoremove = $snaptoremove . $partial[0];
+            dell_delete_snapshot($scfg, $cache, $name, $snaptoremove);
+            $snaptoremove = '';
+        };
+    };
+
+    # Reset volume online
+    $tn->cmd(sprintf("volume select %s online", $name));
+    return 1;
+
 }
 
 sub dell_list_luns {
@@ -181,7 +259,7 @@ sub dell_get_lun_target {
     $cache->{telnet} = dell_connect($scfg) unless $cache->{telnet};
     my $tn = $cache->{telnet};
 
-    my @out = $tn->cmd("volume select $name show");
+    my @out = $tn->cmd(sprintf("volume select %s show", $name));
     for my $line (@out) {
 	next unless $line =~ m/^iSCSI Name: (.+)$/;
 	return $1;
@@ -206,12 +284,6 @@ sub dell_status {
     }
 }
 
-
-sub iscsi_enable {
-    my ($class, $scfg, $cache, $name) = @_;
-
-    my $target = dell_get_lun_target($scfg, $cache, $name) || die "Cannot get iscsi tagret name";
-}
 
 sub multipath_enable {
     my ($class, $scfg, $cache, $name) = @_;

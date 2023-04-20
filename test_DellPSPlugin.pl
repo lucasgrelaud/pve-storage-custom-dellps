@@ -41,8 +41,39 @@ printf("\t- Free space: %d GB\n", int($status[1]) / PVE::Storage::Custom::DellPS
 printf("\t- Used space: %d GB\n", int($status[2]) / PVE::Storage::Custom::DellPSPlugin::getmultiplier('GB'));
 printf("\t- Active : %s\n", $status[3]);
 
-print "Create the Volume (LUN) : vm-20-disk-1\n";
-#PVE::Storage::Custom::DellPSPlugin::dell_create_lun($scfg, $cache, 'vm-20-disk-1', '1GB');
+print "Create the Volume (LUN): vm-200-disk-1\n";
+PVE::Storage::Custom::DellPSPlugin::dell_create_lun($scfg, $cache, 'vm-200-disk-1', '1GB');
 
-print "Allow PVE nodes to access Volumes (LUN)\n";
-PVE::Storage::Custom::DellPSPlugin::dell_configure_lun($scfg, $cache, 'vm-20-disk-1');
+print "List volume managed by the plugin\n";
+my @volumes = PVE::Storage::Custom::DellPSPlugin::dell_list_luns($scfg, $cache);
+print Dumper(@volumes);
+sleep 1;
+
+print "Get ISCSI name for volume 'vm-20-disk-1'\n";
+my $iscsiname = PVE::Storage::Custom::DellPSPlugin::dell_get_lun_target($scfg, $cache, 'vm-200-disk-1');
+printf("ISCSI name: %s\n", $iscsiname);
+sleep 1;
+
+print "Allow PVE nodes to access volume 'vm-20-disk-1'\n";
+PVE::Storage::Custom::DellPSPlugin::dell_configure_lun($scfg, $cache, 'vm-200-disk-1');
+sleep 1;
+
+print "Resize to 2G volume 'vm-20-disk-1'\n";
+PVE::Storage::Custom::DellPSPlugin::dell_resize_lun($scfg, $cache, 'vm-200-disk-1', '2G');
+sleep 5;
+
+print "Create a snapshot 'test1' for volume 'vm-20-disk-1'\n";
+PVE::Storage::Custom::DellPSPlugin::dell_create_snapshot($scfg, $cache, 'vm-200-disk-1', 'test1');
+sleep 10;
+
+print "Rollback to snapshot 'test1' for volume 'vm-200-disk-1'\n";
+PVE::Storage::Custom::DellPSPlugin::dell_rollback_snapshot($scfg, $cache, 'vm-200-disk-1', 'test1');
+sleep 5;
+
+print "Delete snapshot 'test1' for volume 'vm-20-disk-1'\n";
+PVE::Storage::Custom::DellPSPlugin::dell_delete_snapshot($scfg, $cache, 'vm-200-disk-1', 'test1');
+sleep 5;
+
+print "Delete volume 'vm-20-disk-1'\n";
+PVE::Storage::Custom::DellPSPlugin::dell_delete_lun($scfg, $cache, 'vm-200-disk-1');
+sleep 5;
