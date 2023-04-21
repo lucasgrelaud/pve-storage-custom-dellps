@@ -396,7 +396,6 @@ sub options {
 
 # Storage implementation
 
-# NOTE: parse_volname def has been reviewed
 sub parse_volname {
     my ($class, $volname) = @_;
 
@@ -407,7 +406,6 @@ sub parse_volname {
     }
 }
 
-# NOTE: filesystem_path def has been reviewed
 sub filesystem_path {
     my ($class, $scfg, $volname, $snapname) = @_;
 
@@ -421,14 +419,12 @@ sub filesystem_path {
     return wantarray ? ($path, $vmid, $vtype) : $path;
 }
 
-# NOTE: create_base def has been reviewed
 sub create_base {
     my ($class, $storeid, $scfg, $volname) = @_;
 
     die "Creating base image is currently unimplemented";
 }
 
-# NOTE: clone_image def has been reviewed
 sub clone_image {
     my ($class, $scfg, $storeid, $volname, $vmid, $snap) = @_;
 
@@ -437,8 +433,6 @@ sub clone_image {
 
 # Seems like this method gets size in kilobytes somehow,
 # while listing methost return bytes. That's strange.
-# NOTE: clone_image def has been reviewed
-# TODO: Check consistency with the list method
 sub alloc_image {
     my ($class, $storeid, $scfg, $vmid, $fmt, $name, $size) = @_;
 
@@ -477,7 +471,6 @@ sub alloc_image {
     return $volname;
 }
 
-# NOTE: free_image def has been reviewed
 sub free_image {
     my ($class, $storeid, $scfg, $volname, $isBase) = @_;
 
@@ -489,8 +482,6 @@ sub free_image {
     };
 }
 
-# NOTE: list_images def has been reviewed
-# TODO: Check whether the listing method return a size in bytes or kilobytes
 sub list_images {
     my ($class, $storeid, $scfg, $vmid, $vollist, $cache) = @_;
 
@@ -503,14 +494,12 @@ sub list_images {
     return $res;
 }
 
-# NOTE: status def has been reviewed
 sub status {
     my ($class, $storeid, $scfg, $cache) = @_;
 
     return @{dell_status($scfg, $cache)};
 }
 
-# NOTE: activate_storage def has been reviewed
 sub activate_storage {
     my ($class, $storeid, $scfg, $cache) = @_;
 
@@ -518,7 +507,6 @@ sub activate_storage {
     return 1;
 }
 
-# NOTE: activate_storage def has been reviewed
 sub deactivate_storage {
     my ($class, $storeid, $scfg, $cache) = @_;
 
@@ -526,7 +514,6 @@ sub deactivate_storage {
     return 1;
 }
 
-# NOTE: activate_volume def has been reviewed
 sub activate_volume {
     my ($class, $storeid, $scfg, $volname, $snapname, $cache) = @_;
 
@@ -539,7 +526,6 @@ sub activate_volume {
     return 1;
 }
 
-# NOTE: deactivate_volume def has been reviewed
 sub deactivate_volume {
     my ($class, $storeid, $scfg, $volname, $snapname, $cache) = @_;
 
@@ -551,7 +537,6 @@ sub deactivate_volume {
     return 1;
 }
 
-# NOTE: volume_resize def has been reviewed
 sub volume_resize {
     my ($class, $scfg, $storeid, $volname, $size, $running) = @_;
     my $cache;
@@ -564,7 +549,6 @@ sub volume_resize {
     return undef;
 }
 
-# NOTE: volume_snapshot def has been reviewed
 sub volume_snapshot {
     my ($class, $scfg, $storeid, $volname, $snap) = @_;
     my $cache;
@@ -573,7 +557,6 @@ sub volume_snapshot {
     return undef;
 }
 
-# NOTE: volume_snapshot_rollback def has been reviewed
 sub volume_snapshot_rollback {
     my ($class, $scfg, $storeid, $volname, $snap) = @_;
     my $cache;
@@ -588,7 +571,6 @@ sub volume_snapshot_rollback {
     return undef;
 }
 
-# NOTE: volume_snapshot_delete def has been reviewed
 sub volume_snapshot_delete {
     my ($class, $scfg, $storeid, $volname, $snap, $running) = @_;
     my $cache;
@@ -597,7 +579,6 @@ sub volume_snapshot_delete {
     return undef;
 }
 
-# NOTE: volume_has_feature def has been reviewed
 sub volume_has_feature {
     my ($class, $scfg, $feature, $storeid, $volname, $snapname, $running, , $opts) = @_;
 
