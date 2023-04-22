@@ -284,7 +284,40 @@ sub dell_status {
     }
 }
 
+sub iscsi_enable {
+    my ($class, $scfg, $cache, $name) = @_;
 
+    my $target = dell_get_lun_target($scfg, $cache, $name) || die "Cannot get iscsi tagret name";
+    if (-e "/dev/disk/by-path/ip-" . $scfg->{'groupaddr'} . ":3260-iscsi-" . $target . "-lun-0") {
+        # Rescan target for changes (e.g. resize)
+	    run_command(['/usr/bin/iscsiadm', '-m', 'node', '--targetname', $target, '--portal', $scfg->{'groupaddr'} .':3260', '--rescan']);
+    } else {
+        # Discover portal for new targets
+	    run_command(['/usr/bin/iscsiadm', '-m', 'discovery','--type', 'sendtargets', '--portal', $scfg->{'groupaddr'} .':3260']);
+        # Login to target. Will produce an error if already logged in.
+	    run_command(['/usr/bin/iscsiadm', '-m', 'node', '--targetname', $target, '--portal', $scfg->{'groupaddr'} .':3260', '--login']);
+    }
+
+    sleep 1;
+
+    # wait udev to settle divices
+    run_command(['/usr/bin/udevadm', 'settle']);
+
+}
+
+sub iscsi_disable {
+    my ($class, $scfg, $cache, $name) = @_;
+
+    my $target = dell_get_lun_target($scfg, $cache, $name) || die "Cannot get iscsi tagret name";
+
+    # give some time for runned process to free device
+    sleep 5;
+
+    run_command(['/usr/bin/iscsiadm', '-m', 'node', '--targetname', $target, '--portal', $scfg->{'groupaddr'} .':3260', '--logout'], noerr => 1);
+
+    # wait udev to settle divices
+    run_command(['/usr/bin/udevadm', 'settle']);
+}
 sub multipath_enable {
     my ($class, $scfg, $cache, $name) = @_;
 
@@ -357,10 +390,10 @@ sub properties {
             description => "Volume admin login",
             type => 'string',
         },
-        password => {
-            description => "Volume admin password",
-            type => 'string',
-        },
+        #password => {
+        #    description => "Volume admin password",
+        #    type => 'string',
+        #},
         allowedaddr => {
             description => "Allowed ISCSI client IP list (space separated)",
             type => 'string',
@@ -400,21 +433,28 @@ sub parse_volname {
     my ($class, $volname) = @_;
 
     if ($volname =~ m/vm-(\d+)-disk-\S+/) {
-	return ('images', $volname, $1, undef, undef, undef, 'raw');
+        # returns ($vtype, $name, $vmid, $basename, $basevmid, $isBase, $format)
+	    return ('images', $volname, $1, undef, undef, undef, 'raw');
     } else {
-	die "Invalid volume $volname";
+	    die "Invalid volume $volname";
     }
 }
 
 sub filesystem_path {
     my ($class, $scfg, $volname, $snapname) = @_;
 
+    # TODO: Implement direct attached device snapshot
     die "Direct attached device snapshot is not implemented" if defined($snapname);
 
     my ($vtype, $name, $vmid) = $class->parse_volname($volname);
     my $target = dell_get_lun_target($scfg, undef, $name) || die "Cannot get iscsi tagret name";
 
-    my $path = "/dev/disk/by-id/dm-uuid-mpath-ip-". $scfg->{'groupaddr'} .":3260-iscsi-$target-lun-0";
+    my $path;
+    if ($scfg->{multipath} eq '0') {
+        $path = "/dev/disk/by-path/ip-" . $scfg->{'groupaddr'} . ":3260-iscsi-" . $target . "-lun-0";
+    } else {
+        $path = "/dev/disk/by-id/dm-uuid-mpath-ip-". $scfg->{'groupaddr'} .":3260-iscsi-" . $target . "-lun-0";
+    };
 
     return wantarray ? ($path, $vmid, $vtype) : $path;
 }
@@ -425,6 +465,7 @@ sub create_base {
     die "Creating base image is currently unimplemented";
 }
 
+# TODO: Implement clone image feature
 sub clone_image {
     my ($class, $scfg, $storeid, $volname, $vmid, $snap) = @_;
 
@@ -477,7 +518,11 @@ sub free_image {
     # Will free it in background
     return sub {
         my $cache; # Dell connection cache
-        $class->multipath_disable($scfg, $cache, $volname);
+        if ($scfg->{multipath} eq '0') {
+            $class->iscsi_disable($scfg, $cache, $volname);
+        } else {
+            $class->multipath_disable($scfg, $cache, $volname);
+        }
         dell_delete_lun($scfg, $cache, $volname);
     };
 }
@@ -520,8 +565,11 @@ sub activate_volume {
     die "volume snapshot [de]activation not possible on multipath device" if $snapname;
 
     warn "Activating '$volname'\n";
-
-    $class->multipath_enable($scfg, $cache, $volname);
+    if ($scfg->{multipath} eq '0') {
+        $class->iscsi_enable($scfg, $cache, $volname);
+    } else {
+        $class->multipath_enable($scfg, $cache, $volname);
+    }
 
     return 1;
 }
@@ -532,7 +580,11 @@ sub deactivate_volume {
     die "volume snapshot [de]activation not possible on multipath device" if $snapname;
 
     warn "Deactivating '$volname'\n";
-    $class->multipath_disable($scfg, $cache, $volname);
+    if ($scfg->{multipath} eq '0') {
+        $class->iscsi_disable($scfg, $cache, $volname);
+    } else {
+        $class->multipath_disable($scfg, $cache, $volname);
+    }
 
     return 1;
 }
@@ -565,8 +617,10 @@ sub volume_snapshot_rollback {
 
     #size could be changed here? Check for device changes.
     my $target = dell_get_lun_target($scfg, $cache, $volname) || die "Cannot get iscsi tagret name";
+
+    sleep 5;
     # rescan target for changes
-    run_command(['/usr/bin/iscsiadm', '-m', 'node', '--portal', $scfg->{'groupaddr'} .':3260', '--target', $target, '-R']);
+    run_command(['/usr/bin/iscsiadm', '-m', 'node', '--portal', $scfg->{'groupaddr'} .':3260', '--target', $target, '-R'], noerr => 1);
 
     return undef;
 }
