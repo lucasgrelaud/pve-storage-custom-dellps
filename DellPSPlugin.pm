@@ -18,13 +18,13 @@ sub getmultiplier {
     my ($unit) = @_;
     my $mp;  # Multiplier for unit
     if ($unit eq 'MB') {
-	$mp = 1024*1024;
+	$mp = 1000*1000;
     } elsif ($unit eq 'GB'){
-	$mp = 1024*1024*1024;
+	$mp = 1000*1000*1000;
     } elsif ($unit eq 'TB') {
-	$mp = 1024*1024*1024*1024;
+	$mp = 1000*1000*1000*1000;
     } else {
-	$mp = 1024*1024*1024;
+	$mp = 1000*1000*1000;
 	warn "Bad size suffix \"$4\", assuming gigabytes";
     }
     return $mp;
@@ -222,7 +222,7 @@ sub dell_rollback_snapshot {
         if ($line =~ /^(vm-(\d+)-disk-\d+)/){
             @partial = split(' ', $line);
             $snaptoremove = $partial[0];
-        } elsif ($snaptoremove ne '' && $line =~ /^^\s{2}(\d\d)?:(\d\d:)/) {
+        } elsif ($snaptoremove ne '' && $line =~ /^\s{2}(\d\d)?:(\d\d:)/) {
             @partial = split(' ', $line);
             $snaptoremove = $snaptoremove . $partial[0];
             dell_delete_snapshot($scfg, $cache, $name, $snaptoremove);
@@ -243,12 +243,32 @@ sub dell_list_luns {
     my $res = [];
 
     my @out = $tn->cmd('volume show');
+
+    # Variables for multiline state volume
+    my $currvolname = '';
+    my $currvmid = '';
+    my $currvolsize = '';
+
     for my $line (@out) {
-	if ($line =~ /^(vm-(\d+)-disk-\d+)\s+([\d\.]+)([GMT]B)/) {
-            next if $vmid && $vmid != $2; # $vmid filter
-            next if $vollist && !grep(/^$1$/,@$vollist); # $vollist filter
-	    my $mp = getmultiplier($4);
-	    push(@$res, {'volid' => $1, 'format' => 'raw', 'size' => $3*$mp, 'vmid' => $2});
+        if ($line =~ /^(vm-(\d+)-disk-\d+)\s+([\d\.]+)([GMT]B)/) {
+                next if $vmid && $vmid != $2; # $vmid filter
+                next if $vollist && !grep(/^$1$/,@$vollist); # $vollist filter
+            my $mp = getmultiplier($4);
+            push(@$res, {'volid' => $1, 'format' => 'raw', 'size' => $3*$mp, 'vmid' => $2});
+        } elsif ($line =~ /^(vm-(\d+)-state-\w+)\s+([\d\.]+)([GMT]B)/) {
+            $currvmid = $2;
+            my $mp = getmultiplier($4);
+            $currvolsize = $3*$mp;
+            $currvolname = $1;
+        } elsif ($currvolname ne '' && $line =~ /^\s{2}(\w+(-\w+)*)/) {
+            $currvolname = $currvolname . $1;
+            next if $vmid && $vmid != $currvmid; # $vmid filter
+            next if $vollist && !grep(/^$currvolname$/,@$vollist); # $vollist filter
+            push(@$res, {'volid' => $currvolname, 'format' => 'raw', 'size' => $currvolsize, 'vmid' => $currvmid});
+
+            $currvolname = '';
+            $currvmid = '';
+            $currvolsize = '';
         }
     }
     return $res;
@@ -432,7 +452,7 @@ sub options {
 sub parse_volname {
     my ($class, $volname) = @_;
 
-    if ($volname =~ m/vm-(\d+)-disk-\S+/) {
+    if ($volname =~ m/vm-(\d+)-disk-\S+/ || $volname =~ m/^vm-(\d+)-state-\S+/) {
         # returns ($vtype, $name, $vmid, $basename, $basevmid, $isBase, $format)
 	    return ('images', $volname, $1, undef, undef, undef, 'raw');
     } else {
@@ -478,22 +498,22 @@ sub alloc_image {
     my ($class, $storeid, $scfg, $vmid, $fmt, $name, $size) = @_;
 
     my $volname = $name;
-    
 
     if ($fmt eq 'raw') {
         # Validate volname
-        die "illegal name '$volname' - should be 'vm-$vmid-*'\n"
-	    if $volname && $volname !~ m/^vm-$vmid-disk-/;
-
-        # List volumes (lun) from the EqualLogic
-        my $luns = dell_list_luns($scfg, undef, $vmid);
-        my $vols;
-        for my $lun (@$luns) { # Fill a list with volume name
-        $vols->{$lun->{'volid'}} = 1;
-        }
+        die "illegal name '$volname' - should be 'vm-$vmid-* and max 28 character long'\n"
+	    if $volname && $volname > 28 && $volname !~ m/^vm-$vmid-disk-/ && $volname !~ m/^vm-$vmid-state-/;
 
         # If volname not set, find one
         unless ($volname) {
+            # List volumes (lun) from the EqualLogic
+            my $luns = dell_list_luns($scfg, undef, $vmid);
+            my $vols;
+            for my $lun (@$luns) { # Fill a list with volume name
+            $vols->{$lun->{'volid'}} = 1;
+            }
+
+            # Check the volname does not already exists
             for (my $i = 1; $i < 100; $i++) {
                 if (!$vols->{"vm-$vmid-disk-$i"}) {
                     $volname = "vm-$vmid-disk-$i";
@@ -504,7 +524,7 @@ sub alloc_image {
 
         my $cache; # Dell connection cache
         # Convert to megabytes and grow on one megabyte boundary if needed
-        dell_create_lun($scfg, $cache, $volname, ceil($size/1024) . 'MB');
+        dell_create_lun($scfg, $cache, $volname, ceil($size/1000) . 'MB');
         dell_configure_lun($scfg, $cache, $volname);
     } else {
         die "unsupported format '$fmt'";
@@ -592,7 +612,7 @@ sub deactivate_volume {
 sub volume_resize {
     my ($class, $scfg, $storeid, $volname, $size, $running) = @_;
     my $cache;
-    dell_resize_lun($scfg, $cache, $volname, ceil($size/1024/1024) . 'MB');
+    dell_resize_lun($scfg, $cache, $volname, ceil($size/1000/1000) . 'MB');
 
     my $target = dell_get_lun_target($scfg, $cache, $volname) || die "Cannot get iscsi tagret name";
     # rescan target for changes
