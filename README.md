@@ -22,6 +22,9 @@ Couple debian packages must be installed on the PVE node :
   - make
   - (optional) multipath-tools
 
+Couple perl libraries must be installed on the PVE node: 
+ - Net::Telnet module
+
 Couple configuration must be performed on the SAN :
  - Enable the telnet service
  - Create a volume administrator account
