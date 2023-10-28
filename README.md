@@ -20,6 +20,7 @@ Couple debian packages must be installed on the PVE node :
   - open-iscsi
   - lsscsi
   - make
+  - lintian
   - (optional) multipath-tools
 
 Couple perl libraries must be installed on the PVE node: 
