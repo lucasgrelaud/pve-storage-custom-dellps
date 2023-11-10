@@ -20,7 +20,11 @@ Couple debian packages must be installed on the PVE node :
   - open-iscsi
   - lsscsi
   - make
+  - lintian
   - (optional) multipath-tools
+
+Couple perl libraries must be installed on the PVE node: 
+ - Net::Telnet module
 
 Couple configuration must be performed on the SAN :
  - Enable the telnet service
