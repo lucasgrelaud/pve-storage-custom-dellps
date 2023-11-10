@@ -2,17 +2,18 @@ package PVE::Storage::Custom::DellPSPlugin;
 
 use strict;
 use warnings;
+
+use base qw(PVE::Storage::Plugin);
+
 use Data::Dumper;
 use IO::File;
 use POSIX qw(ceil);
-use PVE::Tools qw(run_command trim file_read_firstline dir_glob_regex);
-use PVE::Storage::Plugin;
-use PVE::JSONSchema qw(get_standard_option);
-use PVE::Cluster qw(cfs_read_file cfs_write_file cfs_lock_file);
 use Net::Telnet;
 use Data::Dumper;
 
-use base qw(PVE::Storage::Plugin);
+use PVE::Tools qw(run_command trim file_read_firstline dir_glob_regex);
+use PVE::JSONSchema qw(get_standard_option);
+use PVE::Cluster qw(cfs_read_file cfs_write_file cfs_lock_file);
 
 sub getmultiplier {
     my ($unit) = @_;
@@ -237,38 +238,91 @@ sub dell_rollback_snapshot {
 }
 
 sub dell_list_luns {
-    my ($scfg, $cache, $vmid, $vollist) = @_;
+    my ($scfg, $cache) = @_;
+
+    # Execute the command
     $cache->{telnet} = dell_connect($scfg) unless $cache->{telnet};
     my $tn = $cache->{telnet};
-    my $res = [];
-
     my @out = $tn->cmd('volume show');
 
-    # Variables for multiline state volume
-    my $currvolname = '';
-    my $currvmid = '';
-    my $currvolsize = '';
+    # Process the results
+    my $res = {};
+    my $volname = '';
+    my $size = '';
+    my $snapshot_count = 0;
+    my $status = '';
+    my $permissions = 0;
+    my $connection_count = '';
+    my $thinprovisioned = '';
 
     for my $line (@out) {
-        if ($line =~ /^(vm-(\d+)-disk-\d+)\s+([\d\.]+)([GMT]B)/) {
-                next if $vmid && $vmid != $2; # $vmid filter
-                next if $vollist && !grep(/^$1$/,@$vollist); # $vollist filter
-            my $mp = getmultiplier($4);
-            push(@$res, {'volid' => $1, 'format' => 'raw', 'size' => $3*$mp, 'vmid' => $2});
-        } elsif ($line =~ /^(vm-(\d+)-state-\w+)\s+([\d\.]+)([GMT]B)/) {
-            $currvmid = $2;
-            my $mp = getmultiplier($4);
-            $currvolsize = $3*$mp;
-            $currvolname = $1;
-        } elsif ($currvolname ne '' && $line =~ /^\s{2}(\w+(-\w+)*)/) {
-            $currvolname = $currvolname . $1;
-            next if $vmid && $vmid != $currvmid; # $vmid filter
-            next if $vollist && !grep(/^$currvolname$/,@$vollist); # $vollist filter
-            push(@$res, {'volid' => $currvolname, 'format' => 'raw', 'size' => $currvolsize, 'vmid' => $currvmid});
+        # Match and get volume info from current line (might be multiline)
+        if ( $line =~ /^((?:vm|base)\S*)\s+(\w+)\s+([\d\.]+)\s+(\w+)\s+(\S+)\s+([\d\.]+)\s+(\w+)/ ) {
+            # Store previously processed info and clear variables
+            if ($volname ne '') {
+                my $adjusted_size = 0;
+                if ($size =~ /^(\d+)(\w+)/ ) {
+                    $adjusted_size = $1 * getmultiplier($2);
+                } else {
+                    die "Could not get size of volume"
+                }
 
-            $currvolname = '';
-            $currvmid = '';
-            $currvolsize = '';
+                $res->{$volname} = {
+                    size => $adjusted_size,
+                    snapshot_count => $snapshot_count,
+                    status => $status,
+                    permissions => $permissions,
+                    connection_count => $connection_count,
+                    thinprovisioned => $thinprovisioned
+                };
+
+                $volname = '';
+                $size = '';
+                $snapshot_count = '';
+                $status = '';
+                $permissions = '';
+                $connection_count = '';
+                $thinprovisioned = '';
+            } 
+
+            # Buffer gathered volume info
+            $volname = $1;
+            $size = $2;
+            $snapshot_count = int($3);
+            $status = $4;
+            $permissions = $5;
+            $connection_count = int($6);
+            $thinprovisioned = $7;
+        } elsif ($line =~ /^\s{2}(\S+)\s/ ) {
+            # In case of a multiline volume name, append th next part
+            $volname = $volname . $1;
+        } elsif ($line =~ /^(?:\w*)/) {
+            if ($volname ne '') {
+                # Store previously processed info and clear variables on command return
+                my $adjusted_size = 0;
+                if ($size =~ /^(\d+)(\w+)/ ) {
+                    $adjusted_size = $1 * getmultiplier($2);
+                } else {
+                    die "Could not get size of volume"
+                }
+
+                $res->{$volname} = {
+                    size => $adjusted_size,
+                    snapshot_count => $snapshot_count,
+                    status => $status,
+                    permissions => $permissions,
+                    connection_count => $connection_count,
+                    thinprovisioned => $thinprovisioned
+                };
+
+                $volname = '';
+                $size = '';
+                $snapshot_count = '';
+                $status = '';
+                $permissions = '';
+                $connection_count = '';
+                $thinprovisioned = '';
+            }
         }
     }
     return $res;
@@ -452,12 +506,11 @@ sub options {
 sub parse_volname {
     my ($class, $volname) = @_;
 
-    if ($volname =~ m/vm-(\d+)-disk-\S+/ || $volname =~ m/^vm-(\d+)-state-\S+/) {
-        # returns ($vtype, $name, $vmid, $basename, $basevmid, $isBase, $format)
-	    return ('images', $volname, $1, undef, undef, undef, 'raw');
-    } else {
-	    die "Invalid volume $volname";
+    if ($volname =~ m/^((vm|base)-(\d+)-\S+)$/) {
+	    return ('images', $1, $3, undef, undef, $2 eq 'base', 'raw');
     }
+
+    die "unable to parse equallogic volume name '$volname'\n";
 }
 
 sub filesystem_path {
@@ -501,26 +554,11 @@ sub alloc_image {
 
     if ($fmt eq 'raw') {
         # Validate volname
-        die "illegal name '$volname' - should be 'vm-$vmid-* and max 28 character long'\n"
-	    if $volname && $volname > 28 && $volname !~ m/^vm-$vmid-disk-/ && $volname !~ m/^vm-$vmid-state-/;
+        die "illegal name '$volname' - should be 'vm-$vmid-*'\n"
+	    if $volname && $volname !~ m/^((vm|base)-(\d+)-\S+)$/;
 
         # If volname not set, find one
-        unless ($volname) {
-            # List volumes (lun) from the EqualLogic
-            my $luns = dell_list_luns($scfg, undef, $vmid);
-            my $vols;
-            for my $lun (@$luns) { # Fill a list with volume name
-            $vols->{$lun->{'volid'}} = 1;
-            }
-
-            # Check the volname does not already exists
-            for (my $i = 1; $i < 100; $i++) {
-                if (!$vols->{"vm-$vmid-disk-$i"}) {
-                    $volname = "vm-$vmid-disk-$i";
-                    last;
-                }
-            }
-        }
+        $volname = $class->find_free_diskname($storeid, $scfg, $vmid, $fmt, 0);
 
         my $cache; # Dell connection cache
         # Convert to megabytes and grow on one megabyte boundary if needed
@@ -550,11 +588,37 @@ sub free_image {
 sub list_images {
     my ($class, $storeid, $scfg, $vmid, $vollist, $cache) = @_;
 
-    my $res = dell_list_luns($scfg, $cache, $vmid, $vollist);
+    $cache->{eq_pve_images} = dell_list_luns($scfg, $cache) if !$cache->{eq_pve_images};
 
-    foreach my $vol (@$res) {
-        $vol->{volid} = "$storeid:" . $vol->{volid};
-    }
+    my $dat = $cache->{eq_pve_images};
+    return [] if !$dat;
+
+    my $res = [];
+    foreach my $volname (keys %$dat) {
+
+	    next if $volname !~ m/^(vm|base)-(\d+)-/;
+	    my $owner = $2;
+
+	    my $info = $dat->{$volname};
+
+	    my $volid = "$storeid:$volname";
+
+	    if ($vollist) {
+		my $found = grep { $_ eq $volid } @$vollist;
+		next if !$found;
+	    } else {
+		next if defined($vmid) && ($owner ne $vmid);
+	    }
+
+	    push @$res, {
+		volid => $volid, format => 'raw', size => $info->{size}, vmid => $owner,
+	    };
+	}
+    # my $res = dell_list_luns($scfg, $cache, $vmid, $vollist);
+
+    # foreach my $vol (@$res) {
+    #     $vol->{volid} = "$storeid:" . $vol->{volid};
+    # }
 
     return $res;
 }
