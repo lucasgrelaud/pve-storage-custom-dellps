@@ -3,3 +3,4 @@
 *.1.gz
 pve-storage/
 .vscode/
+PVE/
