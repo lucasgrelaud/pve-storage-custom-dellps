@@ -94,22 +94,35 @@ sub dell_connect {
     return $obj;
 }
 
-sub get_status {
+sub query_all_size_info {
     my $self = shift;
 
     my @out = $self->{cli}->cmd('show pool');
+    for my $line (@out) {
+        if ( $line =~ m/^% Error - (.+)$/ ) {
+            die "Query all status error : " . $1 . "\n";
+        }
+    }
+
+    my $size_info = {};
     for my $line (@out) {
         next
           unless ( $line =~
             m/(\w+)\s+\w+\s+\d+\s+\d+\s+([\d\.]+)([MGT]B)\s+([\d\.]+)([MGT]B)/
           );
-        next unless ( $1 eq $self->{pool} );
-
+        
         my $total = int( $2 * getmultiplier($3) );
-        my $free  = int( $4 * getmultiplier($5) );
-        my $used  = $total - $free;
-        return [ $total, $free, $used, 1 ];
+        my $avail  = int( $4 * getmultiplier($5) );
+        my $used  = $total - $avail;
+        $size_info->{$1} = {
+            total => $total,
+            avail => $avail,
+            used => $used,
+        };
     }
+
+    return $size_info;
+    
 }
 
 sub list_luns {

@@ -116,3 +116,8 @@ which will lead to long volumes activation times. To workaround it, comment-out
 (or delete) rule in /lib/udev/rules.d/60-multipath.rules WARNING: this way may
 be dangerous if you are using multipath boot.
 
+## References
+This project is build on code structure and ideas of various project : 
+ - https://github.com/mityarzn/pve-storage-custom-dellps/
+ - https://git.proxmox.com/?p=pve-storage.git
+ - https://github.com/LINBIT/linstor-proxmox
