@@ -18,4 +18,5 @@ Replaces: libpve-storage-custom-dellps-perl
 Conflicts: libpve-storage-custom-dellps-perl
 Suggests: multipath-tools
 Description: Proxmox VE plugin for PS-series Dell storages.
- This package contains storage plugin to use PS-series Dell  SAN with Proxmox VE.
+ This package contains storage plugin to use PS-series Dell 
+ SAN with Proxmox VE.

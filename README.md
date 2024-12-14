@@ -17,6 +17,9 @@ _⚠️ The tasks described in this section must be performed on each node of a 
 
 ### Requirements
 Couple debian packages must be installed on the PVE node :
+  - build-essentials
+  - debhelper
+  - devscripts
   - open-iscsi
   - lsscsi
   - make

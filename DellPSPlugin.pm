@@ -21,7 +21,7 @@ use DELLPS::DellPS;
 use DELLPS::PluginHelper
   qw(getmultiplier valid_vm_name valid_base_name valid_snap_name valid_cloudinit_name valid_state_name valid_pvc_name valid_fleece_name valid_name);
 
-my $PLUGIN_VERSION = '0.0.0';
+my $PLUGIN_VERSION = '2.0.0';
 
 # Configuration
 
@@ -154,7 +154,7 @@ sub get_multipath {
 
 sub get_pool {
     my ($scfg) = @_;
-    return $scfg->{pool} || $default_multipath;
+    return $scfg->{pool} || $default_pool;
 }
 
 sub get_status_cache {
@@ -336,7 +336,6 @@ sub alloc_image {
     return $dellps_name;
 }
 
-# TODO
 sub free_image {
     my ( $class, $storeid, $scfg, $volname, $isBase ) = @_;
 
@@ -416,31 +415,33 @@ sub status {
 
     my $pool = get_pool();
 
-    my $cache_key  = 'dellps:sizeinfos';
-    my $info_cache = '/var/cache/dell-proxmox/sizeinfos';
+     my $dellps      = dellps($scfg);
 
-    unless ( $cache->($cache_key) ) {
+    my $cache_key  = 'dellps:sizeinfos';
+    my $info_cache = '/var/cache/dellps-proxmox/sizeinfos';
+
+    unless ( $cache->{$cache_key} ) {
         my $max_age = get_status_cache($scfg);
 
         if ( $max_age and not cache_needs_update( $info_cache, $max_age ) ) {
             $cache->{$cache_key} = lock_retrieve($info_cache);
         }
         else {
-            my $infos = dellps($scfg)->query_all_size_info();
-            $cache->{cache_key} = $infos;
+            my $infos = $dellps->query_all_size_info();
+            $cache->{$cache_key} = $infos;
             lock_store( $infos, $info_cache ) if $max_age;
         }
     }
 
     my $total = $cache->{$cache_key}->{$pool}->{total};
-    my $avail = $cache->{$cache_key}->{$pool}->{free};
+    my $avail = $cache->{$cache_key}->{$pool}->{avail};
     my $used  = $cache->{$cache_key}->{$pool}->{used};
 
     return undef
       unless defined($total)
       ;    # key/RG does not even exist, mark undef == "inactive"
     if ( $total == 0 ) {    # invalidate caches but continue
-        my $infos = dellps($scfg)->query_all_size_info();
+        my $infos = $dellps->query_all_size_info();
         $cache->{$cache_key} = $infos;
         lock_store( $infos, $info_cache );
     }

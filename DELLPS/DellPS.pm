@@ -271,7 +271,7 @@ sub create_lun {
 sub configure_lun {
     my ( $self, $name ) = @_;
     my @out;
-
+    # TODO : configure volume admin
     if (
         (
             !defined( $self->{allowed_address} )

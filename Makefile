@@ -12,7 +12,7 @@ deb:
 	debuild -us -uc -i -b
 
 install:
-	install -D -m 0644 ./DELLPSPlugin.pm ${DESTDIR}$(PERLDIR)/PVE/Storage/Custom/DELLPSPlugin.pm
+	install -D -m 0644 ./DellPSPlugin.pm ${DESTDIR}$(PERLDIR)/PVE/Storage/Custom/DellPSPlugin.pm
 	install -D -m 0644 ./DELLPS/DellPS.pm ${DESTDIR}$(PERLDIR)/DELLPS/DellPS.pm
 	install -D -m 0644 ./DELLPS/PluginHelper.pm ${DESTDIR}$(PERLDIR)/DELLPS/PluginHelper.pm
 
@@ -22,14 +22,14 @@ debrelease:
 else
 debrelease:
 	head -n1 debian/changelog | grep -q "$$( echo '$(VERSION)' | sed -e 's/-rc/~rc/' )"
-	grep 'PLUGIN_VERSION' DELLPSPlugin.pm | grep -q '$(VERSION)'
+	grep 'PLUGIN_VERSION' DellPSPlugin.pm | grep -q '$(VERSION)'
 	dh_clean
 	ln -s . $(REL) || true
 	tar --owner=0 --group=0 -czvf $(REL).tar.gz \
 		$(REL)/Makefile \
 		$(REL)/README.md \
 		$(REL)/CHANGELOG.md \
-		$(REL)/DELLPSPlugin.pm \
+		$(REL)/DellPSPlugin.pm \
 		$(REL)/DELLPS/DellPS.pm \
 		$(REL)/DELLPS/PluginHelper.pm \
 		$(REL)/debian

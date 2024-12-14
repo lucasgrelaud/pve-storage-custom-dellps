@@ -2,7 +2,8 @@ Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: dellps-proxmox
 
 Files: *
-Copyright: Copyright (C) 2016 Dmitry Petuhov <mityapetuhov@gmail.com>
+Copyright: Copyright (C) 2024 Lucas GRELAUD <lucas.grelaud@outlook.fr>
+           Copyright (C) 2016-2017 Dmitry Petuhov <mityapetuhov@gmail.com>
            Copyright (C) 2016-2018, LINBIT HA-Solutions GmbH
            Copyright (C) 2010-2016, Proxmox Server Solutions GmbH
 
