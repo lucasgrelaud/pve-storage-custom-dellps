@@ -110,19 +110,19 @@ sub query_all_size_info {
           unless ( $line =~
             m/(\w+)\s+\w+\s+\d+\s+\d+\s+([\d\.]+)([MGT]B)\s+([\d\.]+)([MGT]B)/
           );
-        
+
         my $total = int( $2 * getmultiplier($3) );
-        my $avail  = int( $4 * getmultiplier($5) );
+        my $avail = int( $4 * getmultiplier($5) );
         my $used  = $total - $avail;
         $size_info->{$1} = {
             total => $total,
             avail => $avail,
-            used => $used,
+            used  => $used,
         };
     }
 
     return $size_info;
-    
+
 }
 
 sub list_luns {
@@ -221,6 +221,7 @@ sub list_luns {
             }
         }
     }
+    $self->{res} = $res;
     return $res;
 }
 
@@ -291,8 +292,13 @@ sub configure_lun {
             }
         }
     }
-    elsif (( !defined( $self->{allowed_address} ) || $self->{allowed_address} eq '' )
-        && ( defined( $self->{chap_login} ) && $self->{chap_login} ne '' ) )
+    elsif (
+        (
+            !defined( $self->{allowed_address} )
+            || $self->{allowed_address} eq ''
+        )
+        && ( defined( $self->{chap_login} ) && $self->{chap_login} ne '' )
+      )
     {
         # Only a chap_login given => access through auth on any ip
         @out = $self->{cli}->cmd(
@@ -308,7 +314,12 @@ sub configure_lun {
         }
 
     }
-    elsif ( ( defined( $self->{allowed_address} ) && $self->{allowed_address} ne '' ) )
+    elsif (
+        (
+            defined( $self->{allowed_address} )
+            && $self->{allowed_address} ne ''
+        )
+      )
     {
         my $usernamestr = '';
         if ( defined( $self->{chap_login} ) && $self->{chap_login} ne '' ) {
@@ -390,6 +401,32 @@ sub rename_lun {
         }
     }
     return 1;
+}
+
+sub is_online {
+    my ( $self, $name, $snapname ) = @_;
+
+    if ($snapname) {
+        my @out = $self->{cli}->cmd(
+            sprintf(
+                "volume select %s snapshot select %s show ",
+                $name, $snapname
+            )
+        );
+        for my $line (@out) {
+            next unless $line =~ m/^Status: (.+)$/;
+            return return $1 eq 'online';
+        }
+    }
+    else {
+        my @out =
+          $self->{cli}->cmd( sprintf( "volume select %s show", $name ) );
+        for my $line (@out) {
+            next unless $line =~ m/^Status: (.+)$/;
+            return $1 eq 'online';
+        }
+    }
+    return undef;
 }
 
 sub set_online {
@@ -613,6 +650,173 @@ sub rollback_snapshot {
     # Reset volume online
     $self->{cli}->cmd( sprintf( "volume select %s online", $name ) );
     return 1;
+
+}
+
+sub iscsi_enable {
+    my ( $self, $name, $snapname ) = @_;
+
+    my $target = '';
+    if ($snapname) {
+        $target = $self->get_lun_target( $name, $snapname )
+          || die "Cannot get iscsi tagret name";
+        $self->set_online( $name, $snapname );
+    }
+    else {
+        $target = $self->get_lun_target($name)
+          || die "Cannot get iscsi tagret name";
+    }
+    if (  -e "/dev/disk/by-path/ip-"
+        . $self->{group_address}
+        . ":3260-iscsi-"
+        . $target
+        . "-lun-0" )
+    {
+        # Rescan target for changes (e.g. resize)
+        run_command(
+            [
+                '/usr/bin/iscsiadm',              '-m', 'node', '--targetname',
+                $target,                          '--portal',
+                $self->{group_address} . ':3260', '--rescan'
+            ]
+        );
+    }
+    else {
+        # Discover portal for new targets
+        run_command(
+            [
+                '/usr/bin/iscsiadm', '-m',
+                'discovery',         '--type',
+                'sendtargets',       '--portal',
+                $self->{group_address} . ':3260'
+            ]
+        );
+
+        # Login to target. Will produce an error if already logged in.
+        run_command(
+            [
+                '/usr/bin/iscsiadm',              '-m', 'node', '--targetname',
+                $target,                          '--portal',
+                $self->{group_address} . ':3260', '--login'
+            ]
+        );
+    }
+
+    sleep 1;
+
+    # wait udev to settle divices
+    run_command( [ '/usr/bin/udevadm', 'settle' ] );
+
+}
+
+sub iscsi_disable {
+    my ( $self, $name, $snapname ) = @_;
+
+    my $target = '';
+    if ($snapname) {
+        $target = $self->get_lun_target( $name, $snapname )
+          || die "Cannot get iscsi tagret name";
+        $self->set_offline( $name, $snapname );
+    }
+    else {
+        $target = $self->get_lun_target($name)
+          || die "Cannot get iscsi tagret name";
+    }
+
+    # give some time for runned process to free device
+    sleep 5;
+
+    run_command(
+        [
+            '/usr/bin/iscsiadm', '-m', 'node', '--targetname',
+            $target, '--portal', $self->{group_address} . ':3260', '--logout'
+        ],
+        noerr => 1
+    );
+
+    if ($snapname) {
+        $self->set_offline( $name, $snapname );
+    }
+
+    # wait udev to settle divices
+    run_command( [ '/usr/bin/udevadm', 'settle' ] );
+}
+
+sub multipath_enable {
+    my ( $self, $cache, $name ) = @_;
+
+    my $target = $self->get_lun_target($name)
+      || die "Cannot get iscsi tagret name";
+
+    # If device exists
+    if (  -e "/dev/disk/by-id/dm-uuid-mpath-ip-"
+        . $self->{group_address}
+        . ":3260-iscsi-$target-lun-0" )
+    {
+        # Rescan target for changes (e.g. resize)
+        run_command(
+            [
+                '/usr/bin/iscsiadm',              '-m', 'node', '--targetname',
+                $target,                          '--portal',
+                $self->{group_address} . ':3260', '--rescan'
+            ]
+        );
+    }
+    else {
+        # Discover portal for new targets
+        run_command(
+            [
+                '/usr/bin/iscsiadm', '-m',
+                'discovery',         '--type',
+                'sendtargets',       '--portal',
+                $self->{group_address} . ':3260'
+            ]
+        );
+
+  # Login to target. Will produce warning if already logged in. But that's safe.
+        run_command(
+            [
+                '/usr/bin/iscsiadm',              '-m', 'node', '--targetname',
+                $target,                          '--portal',
+                $self->{group_address} . ':3260', '--login'
+            ],
+            noerr => 1
+        );
+    }
+
+    sleep 1;
+
+    # wait udev to settle divices
+    run_command( [ '/usr/bin/udevadm', 'settle' ] );
+
+    #force devmap reload to connect new device.
+    run_command( [ '/usr/sbin/multipath', '-r' ] );
+}
+
+sub multipath_disable {
+    my ( $self, $name ) = @_;
+
+    my $target = $self->get_lun_target($name)
+      || die "Cannot get iscsi tagret name";
+
+    # give some time for runned process to free device
+    sleep 5;
+
+    #disable selected target multipathing
+    run_command(
+        [
+            '/sbin/multipath', '-f',
+            'ip-' . $self->{group_address} . ":3260-iscsi-$target-lun-0"
+        ]
+    );
+
+    # Logout from target
+    run_command(
+        [
+            '/usr/bin/iscsiadm', '-m', 'node', '--targetname',
+            $target, '--portal', $self->{group_address} . ':3260', '--logout'
+        ]
+    );
 
 }
 

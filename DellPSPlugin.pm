@@ -7,6 +7,7 @@ use PVE::Storage::Plugin;
 use base qw(PVE::Storage::Plugin);
 
 use Data::Dumper;
+use Carp qw( confess );
 use IO::File;
 use POSIX qw(ceil);
 use Net::Telnet;
@@ -17,8 +18,8 @@ use PVE::JSONSchema qw(get_standard_option);
 use PVE::Cluster    qw(cfs_read_file cfs_write_file cfs_lock_file);
 
 use DELLPS::DellPS;
-use DELLPS::ISCSI;
-use DELLPS::PluginHelper qw(getmultiplier);
+use DELLPS::PluginHelper
+  qw(getmultiplier valid_vm_name valid_base_name valid_snap_name valid_cloudinit_name valid_state_name valid_pvc_name valid_fleece_name valid_name);
 
 my $PLUGIN_VERSION = '0.0.0';
 
@@ -201,7 +202,6 @@ sub dellps {
 
 # Storage implementation
 
-# TODO
 sub parse_volname {
     my ( $class, $volname ) = @_;
 
@@ -281,56 +281,99 @@ sub clone_image {
     return $newname;
 }
 
-# TODO
 sub alloc_image {
     my ( $class, $storeid, $scfg, $vmid, $fmt, $name, $size ) = @_;
 
     # Size is given in kib;
-
     my $min_kib = 3 * 1024;
     $size = $min_kib unless $size > $min_kib;
 
     die "unsupported format '$fmt'" if $fmt ne 'raw';
 
-    my $volname = $name;
+    my $dellps_name;
 
-    # Validate volname
-    die "illegal name '$volname' - should be 'vm-$vmid-*'\n"
-      if $volname && $volname !~ m/^((vm|base)-(\d+)-\S+)$/;
+    my $dellps = dellps($scfg);
+    my $luns   = $dellps->get_luns();
 
-    # If volname not set, find one
-    $volname = $class->find_free_diskname( $storeid, $scfg, $vmid, $fmt, 0 );
+    if ($name) {
+        if (   valid_vm_name($name)
+            or valid_base_name($name)
+            or valid_state_name($name)
+            or valid_pvc_name($name)
+            or valid_fleece_name($name) )
+        {
+            $dellps_name = $name;
+        }
+        elsif ( valid_cloudinit_name($name) ) {
+            $dellps_name = $name;
 
-    my $cache;    # Dell connection cache
+            # If cloudinit image already exist in the pool, no need to recreate
+            return $dellps_name if exist $luns->{$dellps_name};
+        }
+        else {
+            die
+"allocated name ('$name') has to be a valid vm, base, state, or cloud-init name";
+        }
+
+        die "volume '$dellps_name' already exists\n"
+          if exists $luns->{$dellps_name};
+    }
+    else {
+        $dellps_name =
+          $class->find_free_diskname( $storeid, $scfg, $vmid, $fmt );
+    }
+
+    die "unable to allocate an image name for VM $vmid in storage '$storeid'\n"
+      if !defined($dellps_name);
+
+    eval {
         # Convert to megabytes and grow on one megabyte boundary if needed
-    dell_create_lun( $scfg, $cache, $volname, ceil( $size / 1000 ) . 'MB' );
-    dell_configure_lun( $scfg, $cache, $volname );
-
-    return $volname;
+        my $adjusted_size = ceil( $size / 1000 );
+        $dellps->create_lun( $dellps_name, $adjusted_size . 'MB' );
+        $dellps->configure_lun($dellps_name);
+    };
+    confess $@ if $@;
+    return $dellps_name;
 }
 
 # TODO
 sub free_image {
     my ( $class, $storeid, $scfg, $volname, $isBase ) = @_;
 
-    # Will free it in background
-    return sub {
-        my $cache;    # Dell connection cache
-        if ( $scfg->{multipath} eq '0' ) {
-            $class->iscsi_disable( $scfg, $cache, $volname );
+    my $dellps    = dellps($scfg);
+    my $is_online = 1;
+
+    my $dellps_name = $volname;
+
+    for ( 0 .. 9 ) {
+        $is_online = $dellps->is_online( $dellps_name, undef );
+        last if ( !$is_online );
+        sleep(1);
+    }
+
+    warn "Resource $dellps_name still in use after giving it some time"
+      if ($is_online);
+
+    # volume should be offline
+    eval {
+        if ( $dellps->{multipath} eq '0' ) {
+            $dellps->iscsi_disable($volname);
         }
         else {
-            $class->multipath_disable( $scfg, $cache, $volname );
+            $dellps->multipath_disable($volname);
         }
-        dell_delete_lun( $scfg, $cache, $volname );
+        $dellps->delete_lun($volname);
     };
+    confess $@ if $@;
+
+    # Will free it in background
+    return undef;
 }
 
-# TODO
 sub list_images {
     my ( $class, $storeid, $scfg, $vmid, $vollist, $cache ) = @_;
 
-    my $cache_key  = 'dellps:lun';
+    my $cache_key = 'dellps:lun';
 
     $cache->{$cache_key} = dellps($scfg)->list_luns( $scfg, $cache )
       unless $cache->{$cache_key};
@@ -390,100 +433,108 @@ sub status {
     }
 
     my $total = $cache->{$cache_key}->{$pool}->{total};
-    my $avail  = $cache->{$cache_key}->{$pool}->{free};
+    my $avail = $cache->{$cache_key}->{$pool}->{free};
     my $used  = $cache->{$cache_key}->{$pool}->{used};
 
-    return undef unless defined($total); # key/RG does not even exist, mark undef == "inactive"
-    if ($total == 0) { # invalidate caches but continue
+    return undef
+      unless defined($total)
+      ;    # key/RG does not even exist, mark undef == "inactive"
+    if ( $total == 0 ) {    # invalidate caches but continue
         my $infos = dellps($scfg)->query_all_size_info();
         $cache->{$cache_key} = $infos;
-        lock_store($infos, $info_cache);
+        lock_store( $infos, $info_cache );
     }
-
-
+    return ( $total, $avail, $used, 1 );
 }
 
 sub activate_storage {
     my ( $class, $storeid, $scfg, $cache ) = @_;
 
-    # Server's SCSI subsystem is always up, so there's nothing to do
-    return 1;
+    return undef;
 }
 
-# TODO
 sub deactivate_storage {
     my ( $class, $storeid, $scfg, $cache ) = @_;
 
-    # Server's SCSI subsystem is always up, so there's nothing to do
-    return 1;
+    return undef;
 }
 
-# TODO
 sub activate_volume {
     my ( $class, $storeid, $scfg, $volname, $snapname, $cache ) = @_;
 
-    print "Activating '$volname'\n";
-    if ( $scfg->{multipath} eq '0' ) {
+    my $dellps      = dellps($scfg);
+    my $dellps_name = $volname;
+
+    if ( $dellps->{multipath} eq '0' ) {
         if ($snapname) {
-            $class->iscsi_enable( $scfg, $cache, $volname, $snapname );
+            $dellps->iscsi_enable( $dellps_name, $snapname );
         }
         else {
-            $class->iscsi_enable( $scfg, $cache, $volname );
+            $dellps->iscsi_enable($dellps_name);
         }
     }
     else {
-        die "volume snapshot [de]activation not possible on multipath device"
+        die "volume snapshot activation not possible on multipath device"
           if $snapname;
-        $class->multipath_enable( $scfg, $cache, $volname );
+        $dellps->multipath_enable($dellps_name);
     }
-    return 1;
+    return undef;
 }
 
-# TODO
 sub deactivate_volume {
     my ( $class, $storeid, $scfg, $volname, $snapname, $cache ) = @_;
 
-    print "Deactivating '$volname'\n";
-    if ( $scfg->{multipath} eq '0' ) {
-        $class->iscsi_disable( $scfg, $cache, $volname );
+    my $dellps      = dellps($scfg);
+    my $dellps_name = $volname;
+
+    if ( $dellps->{multipath} eq '0' ) {
+        if ($snapname) {
+            $dellps->iscsi_disable( $dellps_name, $snapname );
+        }
+        else {
+            $dellps->iscsi_disable($dellps_name);
+        }
     }
     else {
-        die "volume snapshot [de]activation not possible on multipath device"
+        die "volume snapshot deactivation not possible on multipath device"
           if $snapname;
-        $class->multipath_disable( $scfg, $cache, $volname );
+        $dellps->multipath_disable($dellps_name);
     }
-    return 1;
+    return undef;
 }
 
-# TODO
 sub volume_resize {
     my ( $class, $scfg, $storeid, $volname, $size, $running ) = @_;
-    my $cache;
-    dell_resize_lun( $scfg, $cache, $volname,
-        ceil( $size / 1000 / 1000 ) . 'MB' );
 
-    my $target = dell_get_lun_target( $scfg, $cache, $volname )
+    my $dellps      = dellps($scfg);
+    my $dellps_name = $volname;
+
+    # Convert $size from B to MB
+    my $new_size = ceil( $size / 1000 / 1000 );
+
+    $dellps->resize_lun( $dellps_name, $new_size . 'MB' );
+
+    my $target = $dellps->get_lun_target($dellps_name)
       || die "Cannot get iscsi tagret name";
 
     # rescan target for changes
     run_command(
         [
-            '/usr/bin/iscsiadm',            '-m',
-            'node',                         '--portal',
-            $scfg->{'groupaddr'} . ':3260', '--target',
-            $target,                        '-R'
+            '/usr/bin/iscsiadm', '-m', 'node', '--portal',
+            $dellps->{group_address} . ':3260',
+            '--target', $target, '-R'
         ]
     );
 
-    return undef;
+    return 1;
 }
 
-# TODO
 sub rename_volume {
     my ( $class, $scfg, $storeid, $source_volname, $target_vmid,
         $target_volname )
       = @_;
-    my $cache;
+
+    my $dellps = dellps($scfg);
 
     my ( undef, $source_image, $source_vmid, $base_name, $base_vmid, undef,
         $format )
@@ -492,64 +543,69 @@ sub rename_volume {
       $class->find_free_diskname( $storeid, $scfg, $target_vmid, $format )
       if !$target_volname;
 
-    my $dat = dell_list_luns( $scfg, undef );
+    my $dat = $dellps->list_luns();
     die "target volume '${target_volname}' already exists\n"
       if ( $dat->{$target_volname} );
 
-    dell_rename_lun( $scfg, $cache, $source_volname, $target_volname );
+    eval { $dellps->rename_lun( $source_volname, $target_volname ); };
+    confess $@ if $@;
+
     return "${storeid}:${target_volname}";
 
 }
 
-# TODO
 sub volume_snapshot {
     my ( $class, $scfg, $storeid, $volname, $snap ) = @_;
-    my $cache;
+    my $dellps = dellps($scfg);
 
-    if ( dell_snapshot_exist( $scfg, $cache, $volname, $snap ) ) {
-        dell_create_snapshot( $scfg, $cache, $volname, $snap );
-    }
-    else {
+    if ( !$dellps->snapshot_exist( $volname, $snap ) ) {
         die "target snapshot name already exists.";
     }
 
-    return undef;
+    eval { $dellps->create_snapshot( $volname, $snap ); };
+    confess $@ if $@;
+
+    return 1;
 }
 
 # TODO
 sub volume_snapshot_rollback {
     my ( $class, $scfg, $storeid, $volname, $snap ) = @_;
-    my $cache;
+    my $dellps = dellps($scfg);
 
-    dell_rollback_snapshot( $scfg, $cache, $volname, $snap );
+    eval {
+        $dellps->rollback_snapshot( $volname, $snap );
 
-    #size could be changed here? Check for device changes.
-    my $target = dell_get_lun_target( $scfg, $cache, $volname )
-      || die "Cannot get iscsi tagret name";
+        #size could be changed here? Check for device changes.
+        my $target = $dellps->get_lun_target($volname)
+          || die "Cannot get iscsi tagret name";
 
-    sleep 5;
+        sleep 5;
 
-    # rescan target for changes
-    run_command(
-        [
-            '/usr/bin/iscsiadm',            '-m',
-            'node',                         '--portal',
-            $scfg->{'groupaddr'} . ':3260', '--target',
-            $target,                        '-R'
-        ],
-        noerr => 1
-    );
+        # rescan target for changes
+        run_command(
+            [
+                '/usr/bin/iscsiadm',             '-m',
+                'node',                          '--portal',
+                $dellps->{group_name} . ':3260', '--target',
+                $target,                         '-R'
+            ],
+            noerr => 1
+        );
+    };
+    confess $@ if $@;
 
-    return undef;
+    return 1;
 }
 
-# TODO
 sub volume_snapshot_delete {
     my ( $class, $scfg, $storeid, $volname, $snap, $running ) = @_;
-    my $cache;
+    my $dellps = dellps($scfg);
 
-    dell_delete_snapshot( $scfg, $cache, $volname, $snap );
-    return undef;
+    eval { $dellps->delete_snapshot( $volname, $snap ); };
+    confess $@ if $@;
+
+    return 1;
 }
 
 # TODO
