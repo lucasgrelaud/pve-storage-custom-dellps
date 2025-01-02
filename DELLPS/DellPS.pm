@@ -467,7 +467,7 @@ sub rename_lun {
 
     my @lines =
       $self->{cli}
-      ->cmd( sprintf( "volume select %s iscsi-alias %s", $name, $newname ) );
+      ->cmd( sprintf( "volume rename %s %s", $name, $newname ) );
     for my $line (@lines) {
         if ( $line =~ m/^% Error - (.+)$/ ) {
             die "LUN rename error : " . $1 . "\n";
@@ -756,6 +756,7 @@ sub iscsi_enable {
     else {
         $target = $self->get_lun_target($name)
           || die "Cannot get iscsi tagret name";
+        $self->set_online( $name, $snapname );
     }
     if (  -e "/dev/disk/by-path/ip-"
         . $self->{group_address}
@@ -812,6 +813,7 @@ sub iscsi_disable {
     else {
         $target = $self->get_lun_target($name)
           || die "Cannot get iscsi tagret name";
+        $self->set_offline( $name, $snapname );
     }
 
     # give some time for runned process to free device

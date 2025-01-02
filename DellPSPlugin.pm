@@ -252,8 +252,6 @@ sub filesystem_path {
     return wantarray ? ( $path, $vmid, $vtype ) : $path;
 }
 
-# TODO : Implement create_base
-# See LVMThinPlugin.pm implem
 sub create_base {
     warn "DEBUG: create_base";
     my ( $class, $storeid, $scfg, $volname ) = @_;
@@ -309,7 +307,7 @@ sub clone_image {
 sub alloc_image {
     warn "DEBUG: alloc_image";
     my ( $class, $storeid, $scfg, $vmid, $fmt, $name, $size ) = @_;
-    
+
     # Size is given in kib;
     my $min_kib = 3 * 1024;
     $size = $min_kib unless $size > $min_kib;
