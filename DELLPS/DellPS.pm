@@ -9,7 +9,7 @@ use Data::Dumper;
 use PVE::Tools      qw(run_command);
 use PVE::JSONSchema qw(get_standard_option);
 
-use DELLPS::PluginHelper qw(getmultiplier);
+use DELLPS::PluginHelper qw(getmultiplier valid_base_name);
 
 sub new {
     my ( $class, $args ) = @_;
@@ -122,6 +122,7 @@ sub query_all_size_info {
     return $size_info;
 
 }
+
 # always return the existing one, if you want an updated one, call update_luns()
 # just a getter that does initial update, information could be stale
 sub get_luns {
@@ -440,9 +441,10 @@ sub delete_lun {
     else {
         # Delete the volume
         @lines = $self->{cli}->cmd( sprintf( "volume delete %s", $name ) );
-        if ( $#lines > 1 ) {
-            die 'Cannot set lun offline';
-            return 0;
+        for my $line (@lines) {
+            if ( $line =~ m/^% Error - (.+)$/ ) {
+                die "Volume delete error : " . $1 . "\n";
+            }
         }
     }
 
@@ -466,8 +468,7 @@ sub rename_lun {
     my ( $self, $name, $newname ) = @_;
 
     my @lines =
-      $self->{cli}
-      ->cmd( sprintf( "volume rename %s %s", $name, $newname ) );
+      $self->{cli}->cmd( sprintf( "volume rename %s %s", $name, $newname ) );
     for my $line (@lines) {
         if ( $line =~ m/^% Error - (.+)$/ ) {
             die "LUN rename error : " . $1 . "\n";
@@ -478,6 +479,7 @@ sub rename_lun {
 
 sub convert_lun_to_template {
     my ( $self, $name ) = @_;
+
     # Volume must be offline in order to be converted
     my @lines =
       $self->{cli}->cmd( sprintf( "volume select %s offline", $name ) );
@@ -488,15 +490,17 @@ sub convert_lun_to_template {
     else {
         # Set volume read-only
         my @lines =
-            $self->{cli}->cmd( sprintf( "volume select %s read-only", $name ) );
+          $self->{cli}->cmd( sprintf( "volume select %s read-only", $name ) );
         for my $line (@lines) {
             if ( $line =~ m/^% Error - (.+)$/ ) {
                 die "LUN conversion  to template error : " . $1 . "\n";
             }
         }
+
         # Set volume read-only
-        my @lines =
-            $self->{cli}->cmd( sprintf( "volume select %s convert-to template", $name ) );
+        @lines =
+          $self->{cli}
+          ->cmd( sprintf( "volume select %s convert-to template", $name ) );
         for my $line (@lines) {
             if ( $line =~ m/^% Error - (.+)$/ ) {
                 die "LUN conversion  to template error : " . $1 . "\n";
@@ -504,7 +508,6 @@ sub convert_lun_to_template {
         }
     }
 
-    
     return 1;
 }
 
@@ -553,7 +556,7 @@ sub set_online {
     else {
         my @lines =
           $self->{cli}
-          ->cmd( sprintf( "volume select %s online", $name, $snapname ) );
+          ->cmd( sprintf( "volume select %s online", $name) );
         for my $line (@lines) {
             if ( $line =~ m/^% Error - (.+)$/ ) {
                 die "LUN set online error : " . $1 . "\n";
@@ -691,20 +694,27 @@ sub clone_lun {
                 $name, $snapname, $newname
             )
         );
-        if ( $#lines > 1 ) {
-            die 'Cannot clone volume !';
-            return 0;
+        for my $line (@lines) {
+            if ( $line =~ m/^% Error - (.+)$/ ) {
+                die "Snapshot cloning error : " . $1 . "\n";
+            }
         }
     }
     else {
         # Clone the lun to a new one
-        my @lines =
-          $self->{cli}
-          ->cmd( sprintf( "volume select %s clone %s", $name, $newname ) );
-        if ( $#lines > 1 ) {
-            die 'Cannot clone volume !';
-            return 0;
+        if ( valid_base_name($name) ) {
+            my @lines =
+              $self->{cli}
+              ->cmd( sprintf( "volume select %s create-thin-clone %s", $name, $newname ) );
+            for my $line (@lines) {
+                if ( $line =~ m/^% Error - (.+)$/ ) {
+                    die "volume cloning error : " . $1 . "\n";
+                }
+            }
+        } else {
+            die "Could not clone volume that are not a base image";
         }
+
     }
     return 1;
 
@@ -732,7 +742,7 @@ sub rollback_snapshot {
     sleep 5;
 
     my $snap_list = $self->list_snapshots($name);
-    for my $key ( keys %{$snap_list}) {
+    for my $key ( keys %{$snap_list} ) {
         if ( $key =~ /^((?:vm|base)-\S*)/ ) {
             $self->delete_snapshot( $name, $key );
         }

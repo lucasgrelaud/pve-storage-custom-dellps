@@ -46,7 +46,7 @@ sub type {
 sub plugindata {
     return {
         content =>
-          [ { images => 1, rootdir => 1, none => 1 }, { images => 1 } ],
+          [ { images => 1, rootdir => 1}, { images => 1 } ],
         format => [ { raw => 1 }, 'raw' ],
     };
 }
@@ -270,7 +270,7 @@ sub create_base {
       if $luns->{$parsedname}->{snapshot_count} gt 0;
 
     # Convert to template
-    eval { $dellps->convert_lun_to_template($parsedname);};
+    eval { $dellps->convert_lun_to_template($parsedname); };
     confess $@ if $@;
 
     # Rename volume to base
@@ -278,7 +278,7 @@ sub create_base {
     $newname =~ s/^vm-/base-/;
     eval { $dellps->rename_lun( $parsedname, $newname ); };
     confess $@ if $@;
-    
+
     return $newname;
 }
 
@@ -295,13 +295,13 @@ sub clone_image {
     my $newname = $class->find_free_diskname( $storeid, $scfg, $vmid );
 
     my $dellps = dellps($scfg);
-    if ($snap) {
-        $dellps->clone_lun( $volname, $newname, $snap );
-    }
-    else {
-        $dellps->clone_lun( $volname, $newname );
-    }
+    eval { 
+        $dellps->clone_lun( $volname, $newname, $snap ); 
+        $dellps->configure_lun($newname);
+    };
+    confess $@ if $@;
     return $newname;
+
 }
 
 sub alloc_image {
@@ -653,12 +653,10 @@ sub volume_has_feature {
 
     my $features = {
         snapshot => { current => 1 },
-
-        #clone => {base => 1}, # TODO, require template
+        clone      => { base    => 1 },
         template   => { current => 1 },
         copy       => { base    => 1, current => 1, snap => 1 },
         sparseinit => { base    => 1, current => 1 },
-
         #replicate => {}, # Could not implement now (lacking a replication pool)
         rename => { current => 1 },
     };
