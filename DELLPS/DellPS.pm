@@ -88,7 +88,6 @@ sub dell_connect {
     $obj->cmd('cli-settings reprintBadInput off');
     $obj->cmd('stty hardwrap off');
     $obj->cmd('stty columns 255');
-    $obj->cmd('stty columns 10');
 
     # Return telnet session
     return $obj;
@@ -110,7 +109,6 @@ sub query_all_size_info {
           unless ( $line =~
             m/(\w+)\s+\w+\s+\d+\s+\d+\s+([\d\.]+)([MGT]B)\s+([\d\.]+)([MGT]B)/
           );
-
         my $total = int( $2 * getmultiplier($3) );
         my $avail = int( $4 * getmultiplier($5) );
         my $used  = $total - $avail;
@@ -124,8 +122,16 @@ sub query_all_size_info {
     return $size_info;
 
 }
+# always return the existing one, if you want an updated one, call update_luns()
+# just a getter that does initial update, information could be stale
+sub get_luns {
+    my $self = shift;
 
-sub list_luns {
+    return $self->{luns} if exists $self->{luns};
+    return $self->update_luns();
+}
+
+sub update_luns {
     my $self = shift;
 
     # Execute the command
@@ -221,7 +227,73 @@ sub list_luns {
             }
         }
     }
-    $self->{res} = $res;
+
+    $self->{luns} = $res;
+    return $res;
+}
+
+sub list_snapshots {
+    my ( $self, $volname ) = @_;
+
+    my @out =
+      $self->{cli}
+      ->cmd( sprintf( "volume select %s snapshot show", $volname ) );
+
+    my $res              = {};
+    my $name             = '';
+    my $status           = '';
+    my $permissions      = '';
+    my $connection_count = '';
+
+    for my $line (@out) {
+
+        # Match and get volume info from current line (might be multiline)
+        if ( $line =~ /^((?:vm|base)*\S*)\s+([\w-]+)\s+(\w+)\s+(\d+)/ ) {
+
+            # Store previously processed info and clear variables
+            if ( $name ne '' ) {
+
+                $res->{$name} = {
+                    status           => $status,
+                    permissions      => $permissions,
+                    connection_count => $connection_count,
+                };
+
+                $name             = '';
+                $status           = '';
+                $permissions      = '';
+                $connection_count = '';
+            }
+
+            # Buffer gathered volume info
+            $name             = $1;
+            $status           = $3;
+            $permissions      = $2;
+            $connection_count = int($4);
+        }
+        elsif ( $line =~ /^\s{2}(\S+)\s/ ) {
+
+            # In case of a multiline volume name, append th next part
+            $name = $name . $1;
+        }
+        elsif ( $line =~ /^(?:\w*)/ ) {
+            if ( $name ne '' ) {
+
+                $res->{$name} = {
+                    status           => $status,
+                    permissions      => $permissions,
+                    connection_count => $connection_count,
+                };
+
+                $name             = '';
+                $status           = '';
+                $permissions      = '';
+                $connection_count = '';
+            }
+        }
+    }
+
+    # TODO : add to cache ?
     return $res;
 }
 
@@ -271,6 +343,7 @@ sub create_lun {
 sub configure_lun {
     my ( $self, $name ) = @_;
     my @out;
+
     # TODO : configure volume admin
     if (
         (
@@ -357,7 +430,7 @@ sub configure_lun {
 sub delete_lun {
     my ( $self, $name ) = @_;
 
-    # Snapshot must be offline in order to be deleted
+    # Volume must be offline in order to be deleted
     my @lines =
       $self->{cli}->cmd( sprintf( "volume select %s offline", $name ) );
     if ( $#lines > 1 ) {
@@ -400,6 +473,38 @@ sub rename_lun {
             die "LUN rename error : " . $1 . "\n";
         }
     }
+    return 1;
+}
+
+sub convert_lun_to_template {
+    my ( $self, $name ) = @_;
+    # Volume must be offline in order to be converted
+    my @lines =
+      $self->{cli}->cmd( sprintf( "volume select %s offline", $name ) );
+    if ( $#lines > 1 ) {
+        die 'Cannot set volume offline!';
+        return 0;
+    }
+    else {
+        # Set volume read-only
+        my @lines =
+            $self->{cli}->cmd( sprintf( "volume select %s read-only", $name ) );
+        for my $line (@lines) {
+            if ( $line =~ m/^% Error - (.+)$/ ) {
+                die "LUN conversion  to template error : " . $1 . "\n";
+            }
+        }
+        # Set volume read-only
+        my @lines =
+            $self->{cli}->cmd( sprintf( "volume select %s convert-to template", $name ) );
+        for my $line (@lines) {
+            if ( $line =~ m/^% Error - (.+)$/ ) {
+                die "LUN conversion  to template error : " . $1 . "\n";
+            }
+        }
+    }
+
+    
     return 1;
 }
 
@@ -476,8 +581,7 @@ sub set_offline {
     }
     else {
         my @lines =
-          $self->{cli}
-          ->cmd( sprintf( "volume select %s offnline", $name, $snapname ) );
+          $self->{cli}->cmd( sprintf( "volume select %s offline", $name ) );
 
         for my $line (@lines) {
             if ( $line =~ m/^% Error - (.+)$/ ) {
@@ -627,23 +731,10 @@ sub rollback_snapshot {
 
     sleep 5;
 
-    # Remove geneated snapshot post rollback
-    my $snaptoremove = '';
-    my @partial;
-    @lines =
-      $self->{cli}->cmd( sprintf( "volume select %s snapshot show", $name ) );
-    for my $line (@lines) {
-
-        # The snapshot name is lis
-        if ( $line =~ /^(vm-(\d+)-disk-\d+)/ ) {
-            @partial      = split( ' ', $line );
-            $snaptoremove = $partial[0];
-        }
-        elsif ( $snaptoremove ne '' && $line =~ /^\s{2}(\d\d)?:(\d\d:)/ ) {
-            @partial      = split( ' ', $line );
-            $snaptoremove = $snaptoremove . $partial[0];
-            $self->delete_snapshot( $name, $snaptoremove );
-            $snaptoremove = '';
+    my $snap_list = $self->list_snapshots($name);
+    for my $key ( keys %{$snap_list}) {
+        if ( $key =~ /^((?:vm|base)-\S*)/ ) {
+            $self->delete_snapshot( $name, $key );
         }
     }
 

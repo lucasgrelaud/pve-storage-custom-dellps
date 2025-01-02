@@ -203,6 +203,7 @@ sub dellps {
 # Storage implementation
 
 sub parse_volname {
+    warn "DEBUG: parse_volname";
     my ( $class, $volname ) = @_;
 
     if ( $volname =~ m/^((vm|base)-(\d+)-\S+)$/ ) {
@@ -213,20 +214,19 @@ sub parse_volname {
 }
 
 sub filesystem_path {
+    warn "DEBUG: filesystem_path";
     my ( $class, $scfg, $volname, $snapname ) = @_;
 
-# TODO: Implement direct attached device snapshot
-#die "Direct attached device snapshot is not implemented" if defined($snapname);
-    my $cache;
+    my $dellps = dellps($scfg);
     my ( $vtype, $name, $vmid ) = $class->parse_volname($volname);
     my $target = '';
     if ($snapname) {
-        $target = dell_get_lun_target( $scfg, $cache, $name, $snapname )
+        $target = $dellps->get_lun_target( $name, $snapname )
           || die "Cannot get iscsi tagret name";
 
     }
     else {
-        $target = dell_get_lun_target( $scfg, $cache, $name )
+        $target = $dellps->get_lun_target($name)
           || die "Cannot get iscsi tagret name";
 
     }
@@ -255,13 +255,38 @@ sub filesystem_path {
 # TODO : Implement create_base
 # See LVMThinPlugin.pm implem
 sub create_base {
+    warn "DEBUG: create_base";
     my ( $class, $storeid, $scfg, $volname ) = @_;
 
-    die "Creating base image is currently unimplemented";
+    my ( $vtype, $parsedname, $parsedvmid, $basename, $basevmid, $isBase,
+        $format )
+      = $class->parse_volname($volname);
+
+    die "create_base not possible with base image\n" if $isBase;
+
+    my $dellps = dellps($scfg);
+    my $luns   = $dellps->get_luns();
+
+    # Reject conversion to base if volume has snapshots
+    die "unable to create base volume - found snaphost \n"
+      if $luns->{$parsedname}->{snapshot_count} gt 0;
+
+    # Convert to template
+    eval { $dellps->convert_lun_to_template($parsedname);};
+    confess $@ if $@;
+
+    # Rename volume to base
+    my $newname = $parsedname;
+    $newname =~ s/^vm-/base-/;
+    eval { $dellps->rename_lun( $parsedname, $newname ); };
+    confess $@ if $@;
+    
+    return $newname;
 }
 
 # TODO
 sub clone_image {
+    warn "DEBUG: clone_image";
     my ( $class, $scfg, $storeid, $volname, $vmid, $snap ) = @_;
 
     my ( $vtype, $parsedname, $parsedvmid, undef, undef, $isBase, $format ) =
@@ -271,19 +296,20 @@ sub clone_image {
 
     my $newname = $class->find_free_diskname( $storeid, $scfg, $vmid );
 
-    my $cache;    # Dell connection cache
+    my $dellps = dellps($scfg);
     if ($snap) {
-        dell_clone_lun( $scfg, $cache, $volname, $newname, $snap );
+        $dellps->clone_lun( $volname, $newname, $snap );
     }
     else {
-        dell_clone_lun( $scfg, $cache, $volname, $newname );
+        $dellps->clone_lun( $volname, $newname );
     }
     return $newname;
 }
 
 sub alloc_image {
+    warn "DEBUG: alloc_image";
     my ( $class, $storeid, $scfg, $vmid, $fmt, $name, $size ) = @_;
-
+    
     # Size is given in kib;
     my $min_kib = 3 * 1024;
     $size = $min_kib unless $size > $min_kib;
@@ -308,7 +334,7 @@ sub alloc_image {
             $dellps_name = $name;
 
             # If cloudinit image already exist in the pool, no need to recreate
-            return $dellps_name if exist $luns->{$dellps_name};
+            return $dellps_name if exists $luns->{$dellps_name};
         }
         else {
             die
@@ -328,7 +354,7 @@ sub alloc_image {
 
     eval {
         # Convert to megabytes and grow on one megabyte boundary if needed
-        my $adjusted_size = ceil( $size / 1000 );
+        my $adjusted_size = ceil( $size * 0.001024 );
         $dellps->create_lun( $dellps_name, $adjusted_size . 'MB' );
         $dellps->configure_lun($dellps_name);
     };
@@ -337,12 +363,14 @@ sub alloc_image {
 }
 
 sub free_image {
+    warn "DEBUG: free_image";
     my ( $class, $storeid, $scfg, $volname, $isBase ) = @_;
 
-    my $dellps    = dellps($scfg);
-    my $is_online = 1;
-
+    my $dellps      = dellps($scfg);
+    my $is_online   = 1;
     my $dellps_name = $volname;
+
+    $dellps->set_offline($dellps_name);
 
     for ( 0 .. 9 ) {
         $is_online = $dellps->is_online( $dellps_name, undef );
@@ -370,11 +398,12 @@ sub free_image {
 }
 
 sub list_images {
+    warn "DEBUG: list_images";
     my ( $class, $storeid, $scfg, $vmid, $vollist, $cache ) = @_;
 
     my $cache_key = 'dellps:lun';
 
-    $cache->{$cache_key} = dellps($scfg)->list_luns( $scfg, $cache )
+    $cache->{$cache_key} = dellps($scfg)->get_luns()
       unless $cache->{$cache_key};
 
     my $dat = $cache->{$cache_key};
@@ -406,16 +435,16 @@ sub list_images {
             vmid   => $owner,
           };
     }
-
     return $res;
 }
 
 sub status {
+    warn "DEBUG: status";
     my ( $class, $storeid, $scfg, $cache ) = @_;
 
     my $pool = get_pool();
 
-     my $dellps      = dellps($scfg);
+    my $dellps = dellps($scfg);
 
     my $cache_key  = 'dellps:sizeinfos';
     my $info_cache = '/var/cache/dellps-proxmox/sizeinfos';
@@ -449,18 +478,21 @@ sub status {
 }
 
 sub activate_storage {
+    warn "DEBUG: activate_storage";
     my ( $class, $storeid, $scfg, $cache ) = @_;
 
     return undef;
 }
 
 sub deactivate_storage {
+    warn "DEBUG: deactivate_storage";
     my ( $class, $storeid, $scfg, $cache ) = @_;
 
     return undef;
 }
 
 sub activate_volume {
+    warn "DEBUG: activate_volume";
     my ( $class, $storeid, $scfg, $volname, $snapname, $cache ) = @_;
 
     my $dellps      = dellps($scfg);
@@ -483,6 +515,7 @@ sub activate_volume {
 }
 
 sub deactivate_volume {
+    warn "DEBUG: deactivate_volume";
     my ( $class, $storeid, $scfg, $volname, $snapname, $cache ) = @_;
 
     my $dellps      = dellps($scfg);
@@ -505,6 +538,7 @@ sub deactivate_volume {
 }
 
 sub volume_resize {
+    warn "DEBUG: volume_resize";
     my ( $class, $scfg, $storeid, $volname, $size, $running ) = @_;
 
     my $dellps      = dellps($scfg);
@@ -531,6 +565,7 @@ sub volume_resize {
 }
 
 sub rename_volume {
+    warn "DEBUG: rename_volume";
     my ( $class, $scfg, $storeid, $source_volname, $target_vmid,
         $target_volname )
       = @_;
@@ -544,7 +579,7 @@ sub rename_volume {
       $class->find_free_diskname( $storeid, $scfg, $target_vmid, $format )
       if !$target_volname;
 
-    my $dat = $dellps->list_luns();
+    my $dat = $dellps->get_luns();
     die "target volume '${target_volname}' already exists\n"
       if ( $dat->{$target_volname} );
 
@@ -556,10 +591,11 @@ sub rename_volume {
 }
 
 sub volume_snapshot {
+    warn "DEBUG: volume_snapshot";
     my ( $class, $scfg, $storeid, $volname, $snap ) = @_;
     my $dellps = dellps($scfg);
 
-    if ( !$dellps->snapshot_exist( $volname, $snap ) ) {
+    if ( $dellps->snapshot_exist( $volname, $snap ) ) {
         die "target snapshot name already exists.";
     }
 
@@ -569,8 +605,8 @@ sub volume_snapshot {
     return 1;
 }
 
-# TODO
 sub volume_snapshot_rollback {
+    warn "DEBUG: volume_snapshot_rollback";
     my ( $class, $scfg, $storeid, $volname, $snap ) = @_;
     my $dellps = dellps($scfg);
 
@@ -584,6 +620,7 @@ sub volume_snapshot_rollback {
         sleep 5;
 
         # rescan target for changes
+        # BUG : Use of uninitialized value in concatenation (.) or string
         run_command(
             [
                 '/usr/bin/iscsiadm',             '-m',
@@ -620,9 +657,9 @@ sub volume_has_feature {
         snapshot => { current => 1 },
 
         #clone => {base => 1}, # TODO, require template
-        #template => {}, // TODO
-        copy       => { base => 1, current => 1, snap => 1 },
-        sparseinit => { base => 1, current => 1 },
+        template   => { current => 1 },
+        copy       => { base    => 1, current => 1, snap => 1 },
+        sparseinit => { base    => 1, current => 1 },
 
         #replicate => {}, # Could not implement now (lacking a replication pool)
         rename => { current => 1 },

@@ -9,8 +9,11 @@ our @EXPORT_OK =
 
 sub getmultiplier {
     my ($unit) = @_;
-    my $mp;    # Multiplier for unit
-    if ( $unit eq 'MB' ) {
+    my $mp;    # Multiplier for unit, in bytes
+    if ( $unit eq 'KB' ) {
+        $mp = 1000;
+    }
+    elsif ( $unit eq 'MB' ) {
         $mp = 1000 * 1000;
     }
     elsif ( $unit eq 'GB' ) {
