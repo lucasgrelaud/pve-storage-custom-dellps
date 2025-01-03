@@ -818,12 +818,12 @@ sub iscsi_disable {
     if ($snapname) {
         $target = $self->get_lun_target( $name, $snapname )
           || die "Cannot get iscsi tagret name";
-        $self->set_offline( $name, $snapname );
+       
     }
     else {
         $target = $self->get_lun_target($name)
           || die "Cannot get iscsi tagret name";
-        $self->set_offline( $name, $snapname );
+        
     }
 
     # give some time for runned process to free device

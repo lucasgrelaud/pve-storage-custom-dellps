@@ -96,7 +96,7 @@ so you need to add it manually into `/etc/pve/storage.cfg`.
 Edit to add to `/etc/pve/storage.cfg` :
 ```
 dellps: eq-pve
-        adminaddr <ipv4/ipv6>
+        mgntaddr <ipv4/ipv6>
         groupaddr <ipv4/ipv6>
         login <login>
         multipath 0

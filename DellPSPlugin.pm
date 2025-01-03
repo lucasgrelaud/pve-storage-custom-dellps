@@ -26,7 +26,7 @@ my $PLUGIN_VERSION = '2.0.0';
 # Configuration
 
 my $default_groupaddr    = "";
-my $default_adminaddr    = "";
+my $default_mgntaddr    = "";
 my $default_login        = "";
 my $default_password     = "";
 my $default_allowedaddr  = "";
@@ -59,13 +59,11 @@ sub properties {
             format      => 'pve-storage-portal-dns',
             default     => $default_groupaddr,
         },
-
-        # TODO : rename adminaddr to mgntaddre
-        adminaddr => {
+        mgntaddr => {
             description => "Management IP (or DNS name) of storage.",
             type        => 'string',
             format      => 'pve-storage-portal-dns',
-            default     => $default_adminaddr,
+            default     => $default_mgntaddr,
         },
         login => {
             description => "Volume admin login",
@@ -97,7 +95,7 @@ sub options {
         pool        => { optional => 1 },
         login       => { optional => 1 },
         password    => { optional => 1 },
-        adminaddr   => { optional => 1 },
+        mgntaddr   => { optional => 1 },
         chaplogin   => { optional => 1 },
         allowedaddr => { optional => 1 },
         multipath   => { optional => 1 },
@@ -124,7 +122,7 @@ sub get_group_address {
 
 sub get_managment_address {
     my ($scfg) = @_;
-    return $scfg->{adminaddr} || $default_adminaddr;
+    return $scfg->{mgntaddr} || $default_mgntaddr;
 }
 
 sub get_login {
@@ -203,7 +201,6 @@ sub dellps {
 # Storage implementation
 
 sub parse_volname {
-    warn "DEBUG: parse_volname";
     my ( $class, $volname ) = @_;
 
     if ( $volname =~ m/^((vm|base)-(\d+)-\S+)$/ ) {
@@ -214,7 +211,6 @@ sub parse_volname {
 }
 
 sub filesystem_path {
-    warn "DEBUG: filesystem_path";
     my ( $class, $scfg, $volname, $snapname ) = @_;
 
     my $dellps = dellps($scfg);
@@ -253,7 +249,6 @@ sub filesystem_path {
 }
 
 sub create_base {
-    warn "DEBUG: create_base";
     my ( $class, $storeid, $scfg, $volname ) = @_;
 
     my ( $vtype, $parsedname, $parsedvmid, $basename, $basevmid, $isBase,
@@ -282,9 +277,7 @@ sub create_base {
     return $newname;
 }
 
-# TODO
 sub clone_image {
-    warn "DEBUG: clone_image";
     my ( $class, $scfg, $storeid, $volname, $vmid, $snap ) = @_;
 
     my ( $vtype, $parsedname, $parsedvmid, undef, undef, $isBase, $format ) =
@@ -305,7 +298,6 @@ sub clone_image {
 }
 
 sub alloc_image {
-    warn "DEBUG: alloc_image";
     my ( $class, $storeid, $scfg, $vmid, $fmt, $name, $size ) = @_;
 
     # Size is given in kib;
@@ -361,7 +353,6 @@ sub alloc_image {
 }
 
 sub free_image {
-    warn "DEBUG: free_image";
     my ( $class, $storeid, $scfg, $volname, $isBase ) = @_;
 
     my $dellps      = dellps($scfg);
@@ -396,7 +387,6 @@ sub free_image {
 }
 
 sub list_images {
-    warn "DEBUG: list_images";
     my ( $class, $storeid, $scfg, $vmid, $vollist, $cache ) = @_;
 
     my $cache_key = 'dellps:lun';
@@ -437,7 +427,6 @@ sub list_images {
 }
 
 sub status {
-    warn "DEBUG: status";
     my ( $class, $storeid, $scfg, $cache ) = @_;
 
     my $pool = get_pool();
@@ -476,21 +465,18 @@ sub status {
 }
 
 sub activate_storage {
-    warn "DEBUG: activate_storage";
     my ( $class, $storeid, $scfg, $cache ) = @_;
 
     return undef;
 }
 
 sub deactivate_storage {
-    warn "DEBUG: deactivate_storage";
     my ( $class, $storeid, $scfg, $cache ) = @_;
 
     return undef;
 }
 
 sub activate_volume {
-    warn "DEBUG: activate_volume";
     my ( $class, $storeid, $scfg, $volname, $snapname, $cache ) = @_;
 
     my $dellps      = dellps($scfg);
@@ -513,7 +499,6 @@ sub activate_volume {
 }
 
 sub deactivate_volume {
-    warn "DEBUG: deactivate_volume";
     my ( $class, $storeid, $scfg, $volname, $snapname, $cache ) = @_;
 
     my $dellps      = dellps($scfg);
@@ -536,7 +521,6 @@ sub deactivate_volume {
 }
 
 sub volume_resize {
-    warn "DEBUG: volume_resize";
     my ( $class, $scfg, $storeid, $volname, $size, $running ) = @_;
 
     my $dellps      = dellps($scfg);
@@ -563,7 +547,6 @@ sub volume_resize {
 }
 
 sub rename_volume {
-    warn "DEBUG: rename_volume";
     my ( $class, $scfg, $storeid, $source_volname, $target_vmid,
         $target_volname )
       = @_;
@@ -589,7 +572,6 @@ sub rename_volume {
 }
 
 sub volume_snapshot {
-    warn "DEBUG: volume_snapshot";
     my ( $class, $scfg, $storeid, $volname, $snap ) = @_;
     my $dellps = dellps($scfg);
 
@@ -604,7 +586,6 @@ sub volume_snapshot {
 }
 
 sub volume_snapshot_rollback {
-    warn "DEBUG: volume_snapshot_rollback";
     my ( $class, $scfg, $storeid, $volname, $snap ) = @_;
     my $dellps = dellps($scfg);
 
@@ -644,7 +625,6 @@ sub volume_snapshot_delete {
     return 1;
 }
 
-# TODO
 sub volume_has_feature {
     my (
         $class,   $scfg,     $feature, $storeid,
