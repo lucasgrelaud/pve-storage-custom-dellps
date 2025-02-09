@@ -1,5 +1,8 @@
-*.deb
-*.1.pod
-*.1.gz
-pve-storage/
 .vscode/
+PVE/
+debian/.debhelper
+debian/dellps-proxmox
+debian/debhelper-build-stamp
+debian/dellps-proxmox.substvars
+debian/files
+dellps-proxmox-*.tar.gz

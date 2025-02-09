@@ -1,0 +1,22 @@
+Source: dellps-proxmox
+Maintainer: Dmitry Petuhov <mityapetuhov@gmail.com>
+Uploaders: Lucas GRELAUD <lgrelaud@electrolab.fr>
+Section: perl
+Priority: optional
+Build-Depends: debhelper (>= 9)
+
+Package: dellps-proxmox
+Architecture: all
+Depends: libjson-perl,
+         libpve-storage-perl,
+         librest-client-perl,
+         libtypes-serialiser-perl,
+         libnet-telnet-perl,
+         ${misc:Depends},
+         ${perl:Depends}
+Replaces: libpve-storage-custom-dellps-perl
+Conflicts: libpve-storage-custom-dellps-perl
+Suggests: multipath-tools
+Description: Proxmox VE plugin for PS-series Dell storages.
+ This package contains storage plugin to use PS-series Dell 
+ SAN with Proxmox VE.

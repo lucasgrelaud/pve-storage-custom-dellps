@@ -1,23 +1,30 @@
-libpve-storage-custom-mpnetapp-perl (1.0-7) unstable; urgency=medium
+dellps-proxmox (2.0.0) unstable; urgency=medium
+
+  * General rework of the storage plugin
+  * Update to PVE API 10
+
+ -- Lucas GRELAUD <lucas.grelaud@outlook.fr>  Sat, 14 Dec 2024 20:26:00 +0100
+
+dellps-proxmox (1.0-7) unstable; urgency=medium
 
   * Add target rescan on re-activating volume to fix resize
 
  -- Dmitry Petuhov <mityapetuhov@gmail.com>  Sun, 12 Mar 2017 15:05:08 +0300
 
-libpve-storage-custom-mpnetapp-perl (1.0-6) unstable; urgency=medium
+dellps-proxmox (1.0-6) unstable; urgency=medium
 
   * Depend on libpve-storage-perl >=4.0-58 (where plugin support appeared)
 
  -- Dmitry Petuhov <mityapetuhov@gmail.com>  Tue, 27 Sep 2016 17:19:38 +0300
 
-libpve-storage-custom-mpnetapp-perl (1.0-5) unstable; urgency=medium
+dellps-proxmox (1.0-5) unstable; urgency=medium
 
   * Add dot in mage size regexp
   * Set displayinMB cli option for more accurate sizes
 
  -- Dmitry Petuhov <mityapetuhov@gmail.com>  Wed, 14 Sep 2016 17:23:13 +0300
 
-libpve-storage-custom-mpnetapp-perl (1.0-4) unstable; urgency=medium
+dellps-proxmox (1.0-4) unstable; urgency=medium
 
   * Disable debug output of telnet sessions to file
   * Fix volume deletion (first set volume offline)
@@ -25,7 +32,7 @@ libpve-storage-custom-mpnetapp-perl (1.0-4) unstable; urgency=medium
 
  -- Dmitry Petuhov <mityapetuhov@gmail.com>  Tue, 06 Sep 2016 15:51:07 +0300
 
-libpve-storage-custom-mpnetapp-perl (1.0-3) unstable; urgency=medium
+dellps-proxmox (1.0-3) unstable; urgency=medium
 
   * Remove legacy mp_get_wwn() call
   * Prepend "$storeid:" to volid in list_images()
@@ -33,7 +40,7 @@ libpve-storage-custom-mpnetapp-perl (1.0-3) unstable; urgency=medium
 
  -- Dmitry Petuhov <mityapetuhov@gmail.com>  Tue, 06 Sep 2016 15:51:07 +0300
 
-libpve-storage-custom-mpnetapp-perl (1.0-2) unstable; urgency=medium
+dellps-proxmox (1.0-2) unstable; urgency=medium
 
   * Fix Makefile
   * remove unneded sg3-utils dependency
@@ -41,7 +48,7 @@ libpve-storage-custom-mpnetapp-perl (1.0-2) unstable; urgency=medium
 
  -- Dmitry Petuhov <mityapetuhov@gmail.com>  Tue, 06 Sep 2016 15:51:07 +0300
 
-libpve-storage-custom-mpnetapp-perl (1.0-1) unstable; urgency=medium
+dellps-proxmox (1.0-1) unstable; urgency=medium
 
   * Initial release
 
